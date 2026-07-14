@@ -56,6 +56,15 @@ against ADR 0001 rather than assuming it.
   touching daily-timeline's callers. Export is the only filtering caller; the List view is
   untouched, out of scope.
 
+- [The rate date and conversion basis](./tickets/02-rate-date-and-conversion-basis.md) —
+  **per-expense-date** conversion via a new `RatesOnOrBefore(base, date)` (nearest stored
+  rate on-or-before the row's date), falling back to the latest set when nothing precedes.
+  The effective rate date becomes a **per-row `rate_date` column** (the basis varies, so it
+  must); an unconvertible currency leaves converted **and** rate_date blank, never `0`.
+  Chosen over the single-latest-set basis with the fallback's honesty cost accepted and
+  made visible by the column. No historical-*fetch* needed, so no new ticket; ticket 01
+  stands (it deferred the rate choice here).
+
 ## Not yet specified
 
 <!-- in-scope fog too dim to ticket until the route and encoding land -->
