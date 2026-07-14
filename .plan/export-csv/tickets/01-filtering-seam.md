@@ -1,6 +1,8 @@
 ---
 type: grilling
 blocked_by: []
+claimed_by: session-john-goh-2026-07-14
+claimed_at: 2026-07-14T09:03:04Z
 ---
 
 # The server-side filtering seam
