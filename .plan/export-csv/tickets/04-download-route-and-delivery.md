@@ -1,6 +1,8 @@
 ---
 type: grilling
 blocked_by: [01]
+claimed_by: session-john-goh-2026-07-15
+claimed_at: 2026-07-14T17:54:50Z
 ---
 
 # The download route and delivery
