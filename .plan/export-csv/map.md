@@ -86,14 +86,18 @@ against ADR 0001 rather than assuming it.
   (`expensif-{from}_{to}.csv`). Buffering weighed and rejected. Resolves the "streaming vs
   buffering" fog.
 
+- [CSV encoding correctness](./tickets/06-csv-encoding-correctness.md) — `encoding/csv` for
+  RFC-4180 escaping (never hand-rolled), UTF-8 with a leading **BOM** (`EF BB BF`, so Excel
+  reads accented text — tests/re-import must strip it), **comma** delimiter, **CRLF** line
+  endings (`Writer.UseCRLF`). One canonical **US/ISO** format: dot decimals (ticket 03) +
+  comma delimiter, documented — comma-decimal locales import manually, not accommodated.
+  Closes the locale/decimal-separator fog. Hostile-field round-trip is ticket 08's to test.
+
 ## Not yet specified
 
-<!-- in-scope fog too dim to ticket until the route and encoding land -->
-
-- **Locale and the decimal separator.** A CSV opened in a spreadsheet configured for a
-  comma decimal separator mis-parses `12.50`. Whether the spec cares, and whether that
-  interacts with the delimiter choice, only sharpens once encoding is decided.
-  <clears-with: 06>
+<!-- Empty. Both fog patches (streaming/buffering, locale/decimal separator) graduated into
+their anchoring tickets (04, 06) and were decided there. The route to the destination is
+clear; what remains — the page prototype (05), docs (07), test strategy (08) — is takeable. -->
 
 ## Out of scope
 
