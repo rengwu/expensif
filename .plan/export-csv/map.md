@@ -45,7 +45,16 @@ against ADR 0001 rather than assuming it.
 
 ## Decisions so far
 
-<!-- one line per resolved ticket: gist + link. Empty — charting only; nothing resolved. -->
+<!-- one line per resolved ticket: gist + link. -->
+
+- [The server-side filtering seam](./tickets/01-filtering-seam.md) — one `ExpenseFilter`
+  value (range + optional category + payer, zero-values = "all") drives a single deep
+  `ExpensesMatching(ctx, filter)` query at the repository; SQL does the payer/category
+  filtering via the join that already exists. Seam returns **raw** rows — the handler
+  converts, as every view does — so ticket 02's rate questions stay out of the query.
+  `ListExpensesInRange` becomes a one-line delegate, collapsing the duplication without
+  touching daily-timeline's callers. Export is the only filtering caller; the List view is
+  untouched, out of scope.
 
 ## Not yet specified
 
