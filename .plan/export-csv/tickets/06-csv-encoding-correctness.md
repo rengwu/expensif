@@ -1,6 +1,8 @@
 ---
 type: grilling
 blocked_by: [03]
+claimed_by: session-john-goh-2026-07-15
+claimed_at: 2026-07-14T18:04:02Z
 ---
 
 # CSV encoding correctness
