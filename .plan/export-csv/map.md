@@ -76,13 +76,20 @@ against ADR 0001 rather than assuming it.
   as `[]string` records in the handler (no rate-date field on `domain.Expense`); ticket 06
   owns escaping and the header write.
 
+- [The download route and delivery](./tickets/04-download-route-and-delivery.md) — two
+  routes: `GET /export` (the page, a `method=GET` form) and `GET /export.csv?from&to&category&payer`
+  (the download), filters mapping 1:1 onto `ExpenseFilter`, empty param = all. The CSV
+  **streams** to the response at constant memory; validation + rate backfill run first and
+  own every status — **400** on unparseable/inverted range (reusing `httpDateRangeError`),
+  **503** when ticket 02's backfill can't get rates, all **pre-stream**. Zero matches →
+  header-only 200, not an error. `Content-Disposition` filename encodes the range
+  (`expensif-{from}_{to}.csv`). Buffering weighed and rejected. Resolves the "streaming vs
+  buffering" fog.
+
 ## Not yet specified
 
 <!-- in-scope fog too dim to ticket until the route and encoding land -->
 
-- **Streaming vs buffering a large export.** Whether a multi-thousand-row account needs
-  a streamed response (and a service that yields rows) or a buffered file is fine. Hangs
-  on the route's shape and the row-generation seam. <clears-with: 04>
 - **Locale and the decimal separator.** A CSV opened in a spreadsheet configured for a
   comma decimal separator mis-parses `12.50`. Whether the spec cares, and whether that
   interacts with the delimiter choice, only sharpens once encoding is decided.
