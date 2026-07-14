@@ -1,6 +1,8 @@
 ---
 type: grilling
 blocked_by: []
+claimed_by: session-john-goh-2026-07-14b
+claimed_at: 2026-07-14T09:22:56Z
 ---
 
 # The rate date and conversion basis
