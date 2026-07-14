@@ -56,6 +56,17 @@ against ADR 0001 rather than assuming it.
   touching daily-timeline's callers. Export is the only filtering caller; the List view is
   untouched, out of scope.
 
+- [The rate date and conversion basis](./tickets/02-rate-date-and-conversion-basis.md) —
+  **per-expense-date conversion over a persisted historical rate store.** On export, missing
+  dates in the range are **lazily backfilled** from Frankfurter's time-series (one call,
+  upserted, cached) via a new `Timeseries` client method; if they can't be obtained the
+  export **hard-fails** (503, no file) rather than shipping latest-rate guesses. Rows convert
+  at the nearest stored rate on-or-before their date (weekends → prior trading day), shown in
+  a per-row `rate_date` column; a currency the provider doesn't cover blanks converted +
+  rate_date without failing. *Re-grilled: an earlier per-date-with-silent-fallback resolution
+  was reopened and replaced — the fallback was inaccurate.* **Brings historical-rate fetching
+  into scope**; adds a 503 case to ticket 04 and a per-row type to 03.
+
 ## Not yet specified
 
 <!-- in-scope fog too dim to ticket until the route and encoding land -->
