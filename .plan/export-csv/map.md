@@ -67,6 +67,15 @@ against ADR 0001 rather than assuming it.
   was reopened and replaced — the fallback was inaccurate.* **Brings historical-rate fetching
   into scope**; adds a 503 case to ticket 04 and a per-row type to 03.
 
+- [The column set and row formatting](./tickets/03-column-set-and-formatting.md) — ten
+  columns in fixed order (`id,date,category,description,paid_by,amount,currency,
+  amount_converted,currency_converted,rate_date`), one `snake_case` header row, `created_at`
+  omitted. Amounts via `FormatFloat(v,'f',-1,64)` — exact shortest decimal, correct for
+  0/2/3-decimal currencies (`%.2f` rejected as lossy). Absence is an **empty cell**:
+  converted+rate_date blank when unconvertible, paid_by blank when no payer. Rows are built
+  as `[]string` records in the handler (no rate-date field on `domain.Expense`); ticket 06
+  owns escaping and the header write.
+
 ## Not yet specified
 
 <!-- in-scope fog too dim to ticket until the route and encoding land -->
