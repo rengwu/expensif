@@ -39,9 +39,12 @@ Skills every session should consult: `codebase-design` before adding the filteri
 to the service (ticket 01); `prototype` for the page UI (ticket 05); `domain-modeling`
 whenever a term firms up — add **Export** to `CONTEXT.md` when it does.
 
-Standing preference: server-render unless a decision *forces* an island. An Export page
-is a form plus a download link — it should need no island. Ticket 07 confirms that
-against ADR 0001 rather than assuming it.
+Standing preference: server-render unless a decision *forces* an island. ~~An Export page
+is a form plus a download link — it should need no island.~~ **Superseded** — the user chose
+a **live preview** in [The Export page UI](./tickets/05-export-page-ui.md), and accepted an
+island for it. This page carries a preview island regardless; keep the preference as a
+tiebreaker, not a rule. [Docs and architecture catch-up](./tickets/07-docs-and-architecture.md)
+records the reversal against ADR 0001 rather than assuming it.
 
 ## Decisions so far
 
@@ -84,7 +87,8 @@ against ADR 0001 rather than assuming it.
   **503** when ticket 02's backfill can't get rates, all **pre-stream**. Zero matches →
   header-only 200, not an error. `Content-Disposition` filename encodes the range
   (`expensif-{from}_{to}.csv`). Buffering weighed and rejected. Resolves the "streaming vs
-  buffering" fog.
+  buffering" fog. *Undermined by 05: its "two routes / no island" aside is void — the page got
+  a preview island and 09 may add a third route; streaming, error order, and filename stand.*
 
 - [CSV encoding correctness](./tickets/06-csv-encoding-correctness.md) — `encoding/csv` for
   RFC-4180 escaping (never hand-rolled), UTF-8 with a leading **BOM** (`EF BB BF`, so Excel
@@ -104,11 +108,25 @@ against ADR 0001 rather than assuming it.
   a pure fn, still web-layer) and **02** (backfill factored into `EnsureRatesForRange`) to
   make them testable — neither premise breaks, so neither is undermined.
 
+- [The Export page UI](./tickets/05-export-page-ui.md) — a **hybrid** of three prototyped
+  variants: variant C's guided two-step single-column layout carrying variant B's **live
+  preview**. Date range is **presets-as-links + custom**; **Category and Payer are single
+  `<select>`s** (the seam is single-value equality — no multi-select), populated from the
+  account's **DISTINCT categories** (category is free-text upstream) and its users. Nav lives
+  in the **`⋮` menu**, not top-level. The user accepted an **island** for the live preview, so
+  this page is **not** JS-free — reversing the standing preference (see Notes) and undermining
+  04's "no island" aside. Empty/error states stay the **route's** (04). **Surfaces ticket 09**:
+  the preview needs a server contract the prototype couldn't give — converted-vs-raw sample is
+  the sharp question. Approved markup:
+  [`assets/export-page.html.approved`](./assets/export-page.html.approved).
+
 ## Not yet specified
 
 <!-- Empty. Both fog patches (streaming/buffering, locale/decimal separator) graduated into
-their anchoring tickets (04, 06) and were decided there. The route to the destination is
-clear; what remains — the page prototype (05), docs (07), test strategy (08) — is takeable. -->
+their anchoring tickets (04, 06) and were decided there. Ticket 05's live-preview choice
+surfaced a fresh question — the preview endpoint's server contract — created directly as
+ticket 09 (a sharp, ticketable decision, not fog). What remains: the preview endpoint (09),
+docs (07). -->
 
 ## Out of scope
 

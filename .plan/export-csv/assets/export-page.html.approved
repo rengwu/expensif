@@ -1,0 +1,116 @@
+{{/*
+  APPROVED — export-csv ticket 05 (The Export page UI). The markup the -impl map builds
+  for GET /export. NOT wired into the app; the three-variant prototype that produced it
+  (assets/export-page-prototype.html, ?variant=A|B|C) has been deleted.
+
+  WON: a HYBRID — variant C's guided two-step single-column layout, carrying variant B's
+  LIVE preview (row count + sample rows that update as filters change).
+
+  Chosen over:
+    A — a plain blind form, one card, zero JS. Lost: the user wanted reassurance before
+        committing to a download.
+    C-as-drawn — a STATIC "here's the file shape" preview (fixed header + example row, no
+        query). Its layout won; its static preview lost to B's live one.
+    B-as-drawn — a two-column presets+preview split. Its live preview won; its layout lost
+        to C's calmer single column.
+
+  DECISION WITH TEETH — this page carries an ISLAND, reversing the effort's standing
+  "server-render, a form + link needs no island" preference (map Notes; ADR 0001). The user
+  explicitly accepted JS/fetch here for the live preview. Two knock-ons:
+    - The live preview needs a SERVER CONTRACT (a preview endpoint: route, payload, and
+      crucially whether the sample shows CONVERTED amounts — which would run ticket 02's
+      per-date rate backfill on every filter change — or raw amounts). That contract is
+      ticket 09's to decide; the mount below is a placeholder pending it.
+    - Ticket 04's "confirms no island / two new routes" fact is now overturned (see 04's
+      undermined note). 04's streaming download, error order, and filename decisions stand.
+
+  Grounding that is NOT up for grabs (decided upstream):
+    - ticket 01: one ExpenseFilter{Start,End,Category,PayerID}; Category & Payer are
+      SINGLE-VALUE equality, ""/0 = "all". No multi-select.
+    - ticket 04: the download form is method=GET, action=/export.csv, emitting exactly
+      from,to,category,payer. 400/503/header-only-200 are the ROUTE's, not the page's.
+    - Category is FREE-TEXT in this app (add form uses a pills island, no enum), so the
+      dropdown is populated from the account's DISTINCT existing categories — a small
+      SELECT DISTINCT the -impl map adds. .Categories / .Users / .PrefCurrency below are
+      the template data this page needs.
+
+  Nav: Export lives in the ⋮ overflow menu beside Preferences (base.html:26-28), NOT
+  top-level. It is a less-frequent action; the top nav stays Daily / Calendar.
+
+  Presets ("This month" etc.) are plain links that navigate to /export?from=&to= (no JS
+  needed to fill them); "Custom" reveals the date inputs. The ONLY JS on this page is the
+  preview island.
+
+  See .plan/export-csv/tickets/05-export-page-ui.md and ticket 09 (preview endpoint).
+*/}}
+{{define "title"}}Export{{end}}
+{{define "content"}}
+{{template "mobile-pad-start"}}
+{{template "page-title" dict "title" "Export expenses"}}
+{{template "mobile-pad-end"}}
+
+<form method="GET" action="/export.csv" id="export-form" class="space-y-4">
+
+  {{/* ── Step 1 · choose what to include ─────────────────────────────────────── */}}
+  <div class="bg-white rounded-none sm:rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 space-y-5">
+    <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">1 · Choose expenses</div>
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Range</label>
+      {{/* Presets are links (server-fills from/to); Custom reveals the inputs. */}}
+      <div class="flex flex-wrap gap-2">
+        <a href="/export?preset=month" class="rounded-full px-3 py-1 text-sm {{if eq .Preset "month"}}bg-blue-600 text-white{{else}}border border-gray-300 hover:bg-gray-50{{end}}">This month</a>
+        <a href="/export?preset=year"  class="rounded-full px-3 py-1 text-sm {{if eq .Preset "year"}}bg-blue-600 text-white{{else}}border border-gray-300 hover:bg-gray-50{{end}}">This year</a>
+        <a href="/export?preset=all"   class="rounded-full px-3 py-1 text-sm {{if eq .Preset "all"}}bg-blue-600 text-white{{else}}border border-gray-300 hover:bg-gray-50{{end}}">All time</a>
+        <button type="button" id="custom-range-toggle" class="rounded-full px-3 py-1 text-sm border border-gray-300 hover:bg-gray-50">Custom…</button>
+      </div>
+      <div id="custom-range" class="flex items-center gap-2 mt-3 {{if not .CustomRange}}hidden{{end}}">
+        <input type="date" name="from" value="{{.From}}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <span class="text-gray-400">→</span>
+        <input type="date" name="to" value="{{.To}}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <p class="text-xs text-gray-400 mt-1">Leave the range open to export from the beginning / up to today.</p>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block font-medium text-gray-700 mb-1">Category</label>
+        {{/* "" = all. Options are the account's DISTINCT categories (free-text field upstream). */}}
+        <select name="category" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">All categories</option>
+          {{range .Categories}}<option value="{{.}}" {{if eq $.Category .}}selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </div>
+      <div>
+        <label class="block font-medium text-gray-700 mb-1">Payer</label>
+        {{/* 0 = all. */}}
+        <select name="payer" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="0">All payers</option>
+          {{range .Users}}<option value="{{.ID}}" {{if eq $.PayerID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  {{/* ── Step 2 · live preview + download ────────────────────────────────────── */}}
+  <div class="bg-white rounded-none sm:rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 space-y-4">
+    <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">2 · Preview &amp; download</div>
+
+    {{/* ISLAND. Watches the form's filter inputs, fetches count + sample rows on change,
+         and renders them here. Its endpoint + payload + whether the sample is converted or
+         raw is TICKET 09; treat data-props as provisional. The initial filters seed it so
+         the first paint needs no round-trip. */}}
+    <div data-island="export-preview"
+         data-props='{"from":"{{.From}}","to":"{{.To}}","category":"{{.Category}}","payer":{{.PayerID}},"prefCurrency":"{{.PrefCurrency}}"}'>
+      {{/* Server-rendered fallback shown until the island hydrates. */}}
+      <div class="text-gray-500">Loading preview…</div>
+    </div>
+
+    {{template "button" dict "variant" "primary" "type" "submit" "text" "Download CSV" "class" "w-full"}}
+    <p class="text-xs text-gray-400">
+      Fixed 10-column CSV, one header row. Amounts convert to {{.PrefCurrency}} at each expense's
+      own date; a blank converted amount means no rate was available.
+    </p>
+  </div>
+</form>
+{{end}}

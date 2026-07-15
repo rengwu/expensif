@@ -1,6 +1,7 @@
 ---
 type: grilling
 blocked_by: [01]
+undermined_by: [05]
 ---
 
 # The download route and delivery
@@ -27,6 +28,12 @@ inputs are what the route carries.
   friendly "nothing matched" back on the page? Decide before it surprises someone.
 
 ## Answer
+
+> **Undermined by ticket 05.** This answer's forward-looking fact — "Ticket 07 records two
+> new routes and confirms **no island**" — is overturned: ticket 05 gave the page a live
+> preview **island**, and ticket 09 may add a **third** (preview) route. The
+> streaming-download, error-order (400/503/header-only-200), and filename decisions below are
+> untouched and still stand; only the "two routes / no island" aside is void.
 
 **Two routes: `GET /export` renders the page, `GET /export.csv` streams the download.
 Filters ride query params that map 1:1 onto `ExpenseFilter`. Validation and rate backfill
