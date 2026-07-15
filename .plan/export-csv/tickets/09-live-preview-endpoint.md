@@ -1,6 +1,8 @@
 ---
 type: grilling
 blocked_by: [02, 04, 05]
+claimed_by: claude-session-3ef0a2a8
+claimed_at: 2026-07-15T19:41:15Z
 ---
 
 # The live-preview endpoint contract
