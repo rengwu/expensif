@@ -1,6 +1,8 @@
 ---
 type: grilling
 blocked_by: [01, 03, 06]
+claimed_by: session-0630dd93
+claimed_at: 2026-07-15T06:15:26Z
 ---
 
 # Test strategy
