@@ -132,6 +132,17 @@ records the reversal against ADR 0001 rather than assuming it.
   soft 400 hint, no 503. *Refines 01 (three reads off one filter, still all Export). Realises the
   third route 05 predicted; discharges the "no island" asides for 07.*
 
+- [Docs and architecture catch-up](./tickets/07-docs-and-architecture.md) — Export sits **inside**
+  the recorded architecture: **ADR 0001 covers the preview island as-is** (its daily-timeline note
+  already generalized the rule to "an island that only moves server-rendered HTML into the page");
+  the impl session **amends that note** to name the second vanilla island — no new ADR. `CONTEXT.md`
+  gains two **user-facing** terms, **Export** and **Export Preview**, with the code seam names
+  (`ExpensesMatching`/`CountMatching`) riding parenthetically like Payer's `paidBy`, not as glossary
+  entries; the **Island** entry generalizes. **No `AGENTS.md` change** (Layout is package structure,
+  unchanged). This ticket **decides and drafts** the doc text; `export-csv-impl` writes it, as
+  daily-timeline's docs landed in its impl map. The effort's "a form + link needs no island"
+  reversal is recorded here as *decided* (argued in 05), not assumed.
+
 ## Not yet specified
 
 <!-- Empty. All fog is decided: the two original patches (streaming/buffering, locale/decimal
