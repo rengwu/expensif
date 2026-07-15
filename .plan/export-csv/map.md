@@ -120,13 +120,25 @@ records the reversal against ADR 0001 rather than assuming it.
   the sharp question. Approved markup:
   [`assets/export-page.html.approved`](./assets/export-page.html.approved).
 
+- [The live-preview endpoint contract](./tickets/09-live-preview-endpoint.md) — a **raw-only**
+  sample (no `amount_converted`) behind a **third** route `GET /export/preview?from&to&category&payer`,
+  returning an **HTML fragment** from a Go partial that a **second vanilla-TS island** swaps in
+  (`el.innerHTML`) — Go stays the only formatter, echoing daily-scroll. Raw ⇒ **no rate work ⇒
+  the preview can never 503**; only the download can. The exact count comes from a new
+  `CountMatching` (`SELECT COUNT(*)`) sharing `ExpensesMatching`'s `ExpenseFilter`→`WHERE`, so
+  count == download rows *by construction*; the sample is a separate `LIMIT 10` read. Island is
+  input-driven, debounced ~250 ms, one fetch in flight; first paint is server-rendered so it
+  fetches only on change. Zero = "no matches" (agrees with 04's header-only 200), bad range =
+  soft 400 hint, no 503. *Refines 01 (three reads off one filter, still all Export). Realises the
+  third route 05 predicted; discharges the "no island" asides for 07.*
+
 ## Not yet specified
 
-<!-- Empty. Both fog patches (streaming/buffering, locale/decimal separator) graduated into
-their anchoring tickets (04, 06) and were decided there. Ticket 05's live-preview choice
-surfaced a fresh question — the preview endpoint's server contract — created directly as
-ticket 09 (a sharp, ticketable decision, not fog). What remains: the preview endpoint (09),
-docs (07). -->
+<!-- Empty. All fog is decided: the two original patches (streaming/buffering, locale/decimal
+separator) graduated into tickets 04 and 06; ticket 05's live-preview choice surfaced the
+preview-endpoint contract as ticket 09, now resolved (raw sample, third route, HTML fragment,
+second vanilla island) — surfacing no new fog. Only ticket 07 (docs and architecture catch-up)
+remains, now unblocked. -->
 
 ## Out of scope
 
