@@ -1,6 +1,8 @@
 ---
 type: grilling
 blocked_by: [04, 05, 09]
+claimed_by: claude-session-3ef0a2a8
+claimed_at: 2026-07-15T19:54:27Z
 ---
 
 # Docs and architecture catch-up
