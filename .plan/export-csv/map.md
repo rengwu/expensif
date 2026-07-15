@@ -93,6 +93,17 @@ against ADR 0001 rather than assuming it.
   comma delimiter, documented — comma-decimal locales import manually, not accommodated.
   Closes the locale/decimal-separator fog. Hostile-field round-trip is ticket 08's to test.
 
+- [Test strategy for the export](./tickets/08-test-strategy.md) — **four seams**: the
+  **service** for logic (`ExpensesMatching` filter combos incl. the sharp *unset = all*;
+  `EnsureRatesForRange` **mock-counted** for fetch-only-missing / cache / hard-fail); a
+  **pure** `buildRecords` for convert + `[]string` format + blanks + header-row-0 +
+  zero→header-only; a **net-new in-memory-SQLite repository** test (the codebase's first)
+  for nearest-on-or-before (weekend→Fri); and **one** `httptest` for 04's statuses/filename
+  + a single hostile-field `csv.Reader` round-trip (06). Tests-first throughout; first red
+  is `TestBuildRecords_ColumnsFormattingAndBlanks`. **Refines 01** (conversion factored into
+  a pure fn, still web-layer) and **02** (backfill factored into `EnsureRatesForRange`) to
+  make them testable — neither premise breaks, so neither is undermined.
+
 ## Not yet specified
 
 <!-- Empty. Both fog patches (streaming/buffering, locale/decimal separator) graduated into
