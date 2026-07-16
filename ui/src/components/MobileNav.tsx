@@ -9,10 +9,12 @@ interface NavLink {
 
 interface MobileNavProps {
   links: NavLink[];
-  preferences?: NavLink;
+  // Less-frequent actions (Export, Preferences), pinned to the bottom of the
+  // panel — the mobile equivalent of the desktop ⋮ overflow menu.
+  secondary?: NavLink[];
 }
 
-export function MobileNav({ links, preferences }: MobileNavProps) {
+export function MobileNav({ links, secondary }: MobileNavProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -59,19 +61,22 @@ export function MobileNav({ links, preferences }: MobileNavProps) {
               </a>
             ))}
           </div>
-          {preferences && (
-            <div className="mt-auto pt-4 pb-6">
-              <a
-                href={preferences.href}
-                className={`block px-3 py-2.5 rounded-lg font-semibold text-sm transition ${
-                  preferences.active
-                    ? 'text-gray-900 bg-gray-100'
-                    : 'text-gray-700 hover:bg-gray-50'
-                }`}
-                onClick={() => setOpen(false)}
-              >
-                {preferences.label}
-              </a>
+          {secondary && secondary.length > 0 && (
+            <div className="mt-auto pt-4 pb-6 flex flex-col gap-1">
+              {secondary.map((link) => (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  className={`block px-3 py-2.5 rounded-lg font-semibold text-sm transition ${
+                    link.active
+                      ? 'text-gray-900 bg-gray-100'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  }`}
+                  onClick={() => setOpen(false)}
+                >
+                  {link.label}
+                </a>
+              ))}
             </div>
           )}
         </nav>

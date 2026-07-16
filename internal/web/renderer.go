@@ -198,6 +198,7 @@ func NewRenderer(templatesDir string, dev bool, manifest assets.Manifest) (*Rend
 		"users":     parsePage(filepath.Join(templatesDir, "users.html")),
 		"user_form": parsePage(filepath.Join(templatesDir, "user_form.html")),
 		"calendar":  parsePage(filepath.Join(templatesDir, "calendar.html")),
+		"export":    parsePage(filepath.Join(templatesDir, "export.html")),
 	}
 
 	fragments := map[string]*template.Template{
@@ -208,6 +209,13 @@ func NewRenderer(templatesDir string, dev bool, manifest assets.Manifest) (*Rend
 }
 
 func (r *Renderer) Render(w http.ResponseWriter, name string, data PageData) error {
+	return r.RenderPage(w, name, data)
+}
+
+// RenderPage renders a page template through the base layout with an arbitrary
+// data value, for pages (like Export) whose view model embeds PageData and adds
+// its own fields. The base layout reads only the promoted PageData fields.
+func (r *Renderer) RenderPage(w http.ResponseWriter, name string, data any) error {
 	t, ok := r.templates[name]
 	if !ok {
 		return fmt.Errorf("template %q not found", name)

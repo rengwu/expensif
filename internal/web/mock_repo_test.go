@@ -112,6 +112,54 @@ func (r *mockRepo) ExpensesMatching(_ context.Context, f domain.ExpenseFilter) (
 	return result, nil
 }
 
+// CountMatching filters independently of ExpensesMatching (its own predicate
+// copy), so a test asserting count == len(rows) proves the two paths agree rather
+// than delegating the answer.
+func (r *mockRepo) CountMatching(_ context.Context, f domain.ExpenseFilter) (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	n := 0
+	for _, e := range r.expenses {
+		if e.Date < f.Start || e.Date > f.End {
+			continue
+		}
+		if f.Category != "" && e.Category != f.Category {
+			continue
+		}
+		if f.PayerID != 0 && e.PaidByID != f.PayerID {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+func (r *mockRepo) SampleMatching(ctx context.Context, f domain.ExpenseFilter, limit int) ([]domain.Expense, error) {
+	rows, err := r.ExpensesMatching(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
+func (r *mockRepo) DistinctCategories(_ context.Context) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	seen := make(map[string]bool)
+	var cats []string
+	for _, e := range r.expenses {
+		if e.Category != "" && !seen[e.Category] {
+			seen[e.Category] = true
+			cats = append(cats, e.Category)
+		}
+	}
+	sort.Strings(cats)
+	return cats, nil
+}
+
 func (r *mockRepo) GetExpense(_ context.Context, id int64) (*domain.Expense, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

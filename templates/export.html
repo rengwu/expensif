@@ -1,0 +1,91 @@
+{{/*
+  The Export page (GET /export). Built against
+  .plan/export-csv/assets/export-page.html.approved (ticket 05 markup), with the
+  preview container now server-rendering the first-paint preview partial (ticket
+  03) in place of the asset's "Loading preview…" placeholder.
+
+  The date-range presets are plain links (server-fills from/to); "Custom…" reveals
+  the date inputs via the small toggle script below. The data-island mount is
+  present for ticket 04's live preview; until that island ships, the container
+  simply shows this server-rendered first paint (not yet live).
+*/}}
+{{define "title"}}Export{{end}}
+{{define "content"}}
+{{template "mobile-pad-start"}}
+{{template "page-title" dict "title" "Export expenses"}}
+{{template "mobile-pad-end"}}
+
+<form method="GET" action="/export.csv" id="export-form" class="space-y-4">
+
+  {{/* ── Step 1 · choose what to include ─────────────────────────────────────── */}}
+  <div class="bg-white rounded-none sm:rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 space-y-5">
+    <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">1 · Choose expenses</div>
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Range</label>
+      {{/* Presets are links (server-fills from/to); Custom reveals the inputs. */}}
+      <div class="flex flex-wrap gap-2">
+        <a href="/export?preset=month" class="rounded-full px-3 py-1 text-sm {{if eq .Preset "month"}}bg-blue-600 text-white{{else}}border border-gray-300 hover:bg-gray-50{{end}}">This month</a>
+        <a href="/export?preset=year"  class="rounded-full px-3 py-1 text-sm {{if eq .Preset "year"}}bg-blue-600 text-white{{else}}border border-gray-300 hover:bg-gray-50{{end}}">This year</a>
+        <a href="/export?preset=all"   class="rounded-full px-3 py-1 text-sm {{if eq .Preset "all"}}bg-blue-600 text-white{{else}}border border-gray-300 hover:bg-gray-50{{end}}">All time</a>
+        <button type="button" id="custom-range-toggle" class="rounded-full px-3 py-1 text-sm border border-gray-300 hover:bg-gray-50">Custom…</button>
+      </div>
+      <div id="custom-range" class="flex items-center gap-2 mt-3 {{if not .CustomRange}}hidden{{end}}">
+        <input type="date" name="from" value="{{.From}}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <span class="text-gray-400">→</span>
+        <input type="date" name="to" value="{{.To}}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <p class="text-xs text-gray-400 mt-1">Leave the range open to export from the beginning / up to today.</p>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block font-medium text-gray-700 mb-1">Category</label>
+        {{/* "" = all. Options are the account's DISTINCT categories (free-text field upstream). */}}
+        <select name="category" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">All categories</option>
+          {{range .Categories}}<option value="{{.}}" {{if eq $.Category .}}selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </div>
+      <div>
+        <label class="block font-medium text-gray-700 mb-1">Payer</label>
+        {{/* 0 = all. */}}
+        <select name="payer" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="0">All payers</option>
+          {{range .Users}}<option value="{{.ID}}" {{if eq $.PayerID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  {{/* ── Step 2 · live preview + download ────────────────────────────────────── */}}
+  <div class="bg-white rounded-none sm:rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 space-y-4">
+    <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">2 · Preview &amp; download</div>
+
+    {{/* ISLAND (ticket 04). Watches the form's filter inputs and re-fetches this
+         same preview partial on change. First paint is server-rendered here, so
+         the island only fetches on change; until it ships, this preview is static. */}}
+    <div data-island="export-preview"
+         data-props='{"from":"{{.From}}","to":"{{.To}}","category":"{{.Category}}","payer":{{.PayerID}}}'>
+      {{template "export-preview" .}}
+    </div>
+
+    {{template "button" dict "variant" "primary" "type" "submit" "text" "Download CSV" "class" "w-full"}}
+    <p class="text-xs text-gray-400">
+      Fixed 10-column CSV, one header row. Amounts convert to {{.PrefCurrency}} at each expense's
+      own date; a blank converted amount means no rate was available.
+    </p>
+  </div>
+</form>
+
+<script>
+  (function () {
+    var toggle = document.getElementById('custom-range-toggle');
+    var panel = document.getElementById('custom-range');
+    if (!toggle || !panel) return;
+    toggle.addEventListener('click', function () {
+      panel.classList.toggle('hidden');
+    });
+  })();
+</script>
+{{end}}

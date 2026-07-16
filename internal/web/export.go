@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/csv"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -9,6 +10,143 @@ import (
 	"expensif/internal/domain"
 	"expensif/internal/service"
 )
+
+// exportPreviewSampleSize is how many sample rows the preview shows — the head of
+// the download, ordered identically.
+const exportPreviewSampleSize = 10
+
+// ExportPageData is the Export page's view model: the shared PageData (nav,
+// currency, today) plus the page's own controls and the first-paint preview. Its
+// Categories field ([]string of the account's distinct categories) deliberately
+// shadows PageData.Categories.
+type ExportPageData struct {
+	PageData
+	Preset       string // the highlighted preset link: "month" | "year" | "all" | "" (custom)
+	CustomRange  bool   // reveal the custom date inputs
+	From         string // custom range bounds, echoed into the date inputs and the download form
+	To           string
+	Category     string // the selected category ("" = all)
+	PayerID      int64  // the selected payer (0 = all)
+	Categories   []string
+	PrefCurrency string
+	PreviewCount int               // exact number of matches — equals the download's row count
+	PreviewRows  []ExportSampleRow // up to exportPreviewSampleSize raw sample rows
+}
+
+// ExportSampleRow is one preview row, pre-formatted in Go so the template (and,
+// in ticket 04, the island) render strings without any formatting logic. Amount
+// uses the same FormatFloat(v,'f',-1,64) rule the CSV uses; these are the entered
+// (raw) figures, never the converted ones.
+type ExportSampleRow struct {
+	Date        string
+	Category    string
+	Description string
+	PaidByName  string
+	Amount      string
+	Currency    string
+}
+
+// exportSampleRows pre-formats the sample expenses for the preview partial.
+func exportSampleRows(rows []domain.Expense) []ExportSampleRow {
+	out := make([]ExportSampleRow, 0, len(rows))
+	for _, e := range rows {
+		out = append(out, ExportSampleRow{
+			Date:        e.Date,
+			Category:    e.Category,
+			Description: e.Description,
+			PaidByName:  e.PaidByName,
+			Amount:      formatMoney(e.Amount),
+			Currency:    e.Currency,
+		})
+	}
+	return out
+}
+
+// exportRange resolves the Export page's range controls into effective from/to
+// bounds and the view state the template needs. A custom range (either bound
+// present) shows the date inputs and highlights no preset; otherwise the preset
+// links drive the bounds, defaulting to "all time" when none is given. today is
+// the account's today (already in its timezone), used only to fill the relative
+// presets by string surgery on the YYYY-MM-DD form.
+func exportRange(preset, from, to, today string) (outPreset, outFrom, outTo string, custom bool) {
+	if from != "" || to != "" {
+		return "", from, to, true
+	}
+	switch preset {
+	case "month":
+		return "month", today[:8] + "01", today, false
+	case "year":
+		return "year", today[:4] + "-01-01", today, false
+	default: // "all" and anything unrecognised default to the open range
+		return "all", "", "", false
+	}
+}
+
+// HandleExportPage renders the guided Export page: the range/category/payer
+// controls and a server-rendered first-paint preview (count + raw sample) for the
+// initial filters. The live updating (island + /export/preview) is ticket 04; on
+// this page the preview is static.
+func (h *HTMLHandler) HandleExportPage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.URL.Query()
+	data := h.basePageData(ctx, "export")
+
+	preset, from, to, custom := exportRange(q.Get("preset"), q.Get("from"), q.Get("to"), data.Today)
+
+	start, end, err := parseExportRange(from, to)
+	if err != nil {
+		// A hand-typed bad or inverted range still renders the page chrome; the
+		// preview simply matches nothing. (Rejecting a bad range with a 400 is the
+		// download route's job, not the page's — the page stays forgiving so a
+		// mid-edit URL isn't hostile.)
+		start, end = "9999-12-31", "0001-01-01"
+	}
+	filter := domain.ExpenseFilter{
+		Start:    start,
+		End:      end,
+		Category: q.Get("category"),
+		PayerID:  parsePayerID(q.Get("payer")),
+	}
+
+	categories, err := h.svc.DistinctCategories(ctx)
+	if err != nil {
+		slog.Error("export: distinct categories", "error", err)
+	}
+	users, err := h.svc.ListUsers(ctx)
+	if err != nil {
+		slog.Error("export: list users", "error", err)
+	}
+	data.Users = users
+
+	count, err := h.svc.CountMatching(ctx, filter)
+	if err != nil {
+		http.Error(w, "Failed to count expenses", http.StatusInternalServerError)
+		return
+	}
+	sample, err := h.svc.SampleMatching(ctx, filter, exportPreviewSampleSize)
+	if err != nil {
+		http.Error(w, "Failed to read expenses", http.StatusInternalServerError)
+		return
+	}
+
+	epd := ExportPageData{
+		PageData:     data,
+		Preset:       preset,
+		CustomRange:  custom,
+		From:         from,
+		To:           to,
+		Category:     filter.Category,
+		PayerID:      filter.PayerID,
+		Categories:   categories,
+		PrefCurrency: data.Currency,
+		PreviewCount: count,
+		PreviewRows:  exportSampleRows(sample),
+	}
+	if err := h.renderer.RenderPage(w, "export", epd); err != nil {
+		slog.Error("render failed", "template", "export", "error", err)
+		http.Error(w, "render error", http.StatusInternalServerError)
+	}
+}
 
 // utf8BOM is prepended once before the CSV so Excel on Windows detects UTF-8 and
 // renders accented text and currency symbols correctly. Readers (and tests) must

@@ -11,6 +11,17 @@ type ExpenseRepository interface {
 	ListExpenses(ctx context.Context, limit int) ([]domain.Expense, error)
 	ListExpensesInRange(ctx context.Context, start, end string) ([]domain.Expense, error)
 	ExpensesMatching(ctx context.Context, filter domain.ExpenseFilter) ([]domain.Expense, error)
+	// CountMatching returns how many expenses match the filter — a COUNT(*)
+	// sibling of ExpensesMatching built from the same filter→WHERE helper, so the
+	// preview count equals the download's row count by construction.
+	CountMatching(ctx context.Context, filter domain.ExpenseFilter) (int, error)
+	// SampleMatching returns the first limit expenses matching the filter, ordered
+	// identically to ExpensesMatching — the genuine first rows of the download,
+	// for the preview sample.
+	SampleMatching(ctx context.Context, filter domain.ExpenseFilter, limit int) ([]domain.Expense, error)
+	// DistinctCategories returns every category the account has ever used, sorted,
+	// for the Export page's category dropdown (category is free-text upstream).
+	DistinctCategories(ctx context.Context) ([]string, error)
 	GetExpense(ctx context.Context, id int64) (*domain.Expense, error)
 	UpdateExpense(ctx context.Context, e domain.Expense) error
 	DeleteExpense(ctx context.Context, id int64) error

@@ -108,6 +108,25 @@ func (s *Service) ExpensesMatching(ctx context.Context, f domain.ExpenseFilter) 
 	return s.expenses.ExpensesMatching(ctx, f)
 }
 
+// CountMatching returns how many expenses match the filter — the Export preview's
+// exact total. It reads the same filtering seam as ExpensesMatching, so the count
+// equals the download's row count for the same filter.
+func (s *Service) CountMatching(ctx context.Context, f domain.ExpenseFilter) (int, error) {
+	return s.expenses.CountMatching(ctx, f)
+}
+
+// SampleMatching returns the first limit matching expenses (newest first) for the
+// preview sample — the genuine head of the download.
+func (s *Service) SampleMatching(ctx context.Context, f domain.ExpenseFilter, limit int) ([]domain.Expense, error) {
+	return s.expenses.SampleMatching(ctx, f, limit)
+}
+
+// DistinctCategories returns every category the account has used, for the Export
+// page's category dropdown.
+func (s *Service) DistinctCategories(ctx context.Context) ([]string, error) {
+	return s.expenses.DistinctCategories(ctx)
+}
+
 func (s *Service) UpdateExpense(ctx context.Context, id int64, amount float64, category, description, date, currency string, paidByID int64) error {
 	category, description, date, currency, err := validateExpenseInput(amount, category, description, date, currency)
 	if err != nil {

@@ -97,15 +97,31 @@ func filterWhere(f domain.ExpenseFilter) (string, []any) {
 // ConvertedAmount is not populated — conversion is the handler's job — but
 // PaidByName rides the existing LEFT JOIN.
 func (r *sqliteRepo) ExpensesMatching(ctx context.Context, f domain.ExpenseFilter) ([]domain.Expense, error) {
+	return r.queryExpenses(ctx, f, 0)
+}
+
+// SampleMatching returns the first limit matching expenses in the same order as
+// ExpensesMatching, so the preview shows the genuine head of the download.
+func (r *sqliteRepo) SampleMatching(ctx context.Context, f domain.ExpenseFilter, limit int) ([]domain.Expense, error) {
+	return r.queryExpenses(ctx, f, limit)
+}
+
+// queryExpenses is the shared SELECT+scan behind ExpensesMatching and
+// SampleMatching: one filter→WHERE mapping, one column list, one ORDER BY, with
+// an optional LIMIT (limit <= 0 = unbounded) — so the sample is always a genuine
+// prefix of the full download.
+func (r *sqliteRepo) queryExpenses(ctx context.Context, f domain.ExpenseFilter, limit int) ([]domain.Expense, error) {
 	where, args := filterWhere(f)
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT e.id, e.amount, e.category, e.description, e.date, e.currency, e.paid_by, u.name, e.created_at
+	query := `SELECT e.id, e.amount, e.category, e.description, e.date, e.currency, e.paid_by, u.name, e.created_at
 		 FROM expenses e
 		 LEFT JOIN users u ON e.paid_by = u.id
-		 WHERE `+where+`
-		 ORDER BY e.date DESC, e.created_at DESC`,
-		args...,
-	)
+		 WHERE ` + where + `
+		 ORDER BY e.date DESC, e.created_at DESC`
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +146,40 @@ func (r *sqliteRepo) ExpensesMatching(ctx context.Context, f domain.ExpenseFilte
 		expenses = append(expenses, e)
 	}
 	return expenses, rows.Err()
+}
+
+// CountMatching counts the expenses matching the filter, sharing filterWhere with
+// ExpensesMatching so the preview count and the download's row count are equal by
+// construction. No join is needed — the payer predicate is on e.paid_by.
+func (r *sqliteRepo) CountMatching(ctx context.Context, f domain.ExpenseFilter) (int, error) {
+	where, args := filterWhere(f)
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM expenses e WHERE `+where, args...,
+	).Scan(&n)
+	return n, err
+}
+
+// DistinctCategories returns every category the account has used, sorted, for the
+// Export page's dropdown. Distinct from ListCategories, which is a recency- and
+// frequency-ranked shortlist for the add form; here the export wants the full set.
+func (r *sqliteRepo) DistinctCategories(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT DISTINCT category FROM expenses WHERE category != '' ORDER BY category`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cats []string
+	for rows.Next() {
+		var cat string
+		if err := rows.Scan(&cat); err != nil {
+			return nil, err
+		}
+		cats = append(cats, cat)
+	}
+	return cats, rows.Err()
 }
 
 func (r *sqliteRepo) GetExpense(ctx context.Context, id int64) (*domain.Expense, error) {

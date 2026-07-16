@@ -1,0 +1,36 @@
+{{/*
+  The Export preview fragment: a count line plus up to ten RAW sample rows
+  (entered amount + currency, never the converted figure). Money is pre-formatted
+  in Go (ExportSampleRow) by the same FormatFloat(v,'f',-1,64) rule the CSV uses,
+  so this template — and, in ticket 04, the island that fetches it over
+  /export/preview — renders strings with no formatting logic of its own.
+
+  Rendered on first paint by the /export page handler; served standalone as a
+  fragment by ticket 04. Reads .PreviewCount and .PreviewRows.
+*/}}
+{{define "export-preview"}}
+<div class="space-y-3">
+  {{if .PreviewCount}}
+  <div class="text-gray-700">
+    <span class="font-semibold text-gray-900">{{.PreviewCount}}</span>
+    matching expense{{if ne .PreviewCount 1}}s{{end}}
+  </div>
+  <div class="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden">
+    {{range .PreviewRows}}
+    <div class="flex items-center justify-between gap-3 px-3 py-2">
+      <div class="min-w-0">
+        <div class="font-medium text-gray-800 truncate">{{if .Description}}{{.Description}}{{else}}<span class="text-gray-400">(no description)</span>{{end}}</div>
+        <div class="text-xs text-gray-400">{{.Date}} · {{.Category}}{{if .PaidByName}} · {{.PaidByName}}{{end}}</div>
+      </div>
+      <div class="shrink-0 tabular-nums text-gray-700">{{.Amount}} {{.Currency}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{if gt .PreviewCount (len .PreviewRows)}}
+  <div class="text-xs text-gray-400">Showing the first {{len .PreviewRows}} of {{.PreviewCount}}.</div>
+  {{end}}
+  {{else}}
+  <div class="text-gray-500">No expenses match these filters</div>
+  {{end}}
+</div>
+{{end}}

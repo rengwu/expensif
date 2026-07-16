@@ -689,10 +689,78 @@ func TestExpensesMatching(t *testing.T) {
 	}
 }
 
+// TestCountMatching mirrors TestExpensesMatching: the same reference dataset and
+// the same filter cases, asserting CountMatching returns the number of rows the
+// filter selects — including the sharp unset (zero-value) = all case.
+func TestCountMatching(t *testing.T) {
+	all := []domain.Expense{
+		{ID: 1, Category: "food", PaidByID: 10, Date: "2026-01-01"},
+		{ID: 2, Category: "travel", PaidByID: 10, Date: "2026-01-02"},
+		{ID: 3, Category: "food", PaidByID: 20, Date: "2026-01-03"},
+	}
+	matches := func(f domain.ExpenseFilter) []domain.Expense {
+		var out []domain.Expense
+		for _, e := range all {
+			if e.Date < f.Start || e.Date > f.End {
+				continue
+			}
+			if f.Category != "" && e.Category != f.Category {
+				continue
+			}
+			if f.PayerID != 0 && e.PaidByID != f.PayerID {
+				continue
+			}
+			out = append(out, e)
+		}
+		return out
+	}
+	// count and matching share the reference predicate but are independent code
+	// paths — mirroring production, where both read the same filterWhere.
+	stub := &expenseRepoStub{
+		count:    func(f domain.ExpenseFilter) (int, error) { return len(matches(f)), nil },
+		matching: func(f domain.ExpenseFilter) ([]domain.Expense, error) { return matches(f), nil },
+	}
+	svc := New(repository.Repos{Expenses: stub}, &mockRateClient{})
+
+	cases := []struct {
+		name   string
+		filter domain.ExpenseFilter
+		want   int
+	}{
+		{"unset = all", domain.ExpenseFilter{Start: "2026-01-01", End: "2026-01-31"}, 3},
+		{"category", domain.ExpenseFilter{Start: "2026-01-01", End: "2026-01-31", Category: "food"}, 2},
+		{"payer", domain.ExpenseFilter{Start: "2026-01-01", End: "2026-01-31", PayerID: 10}, 2},
+		{"category and payer", domain.ExpenseFilter{Start: "2026-01-01", End: "2026-01-31", Category: "food", PayerID: 10}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := svc.CountMatching(context.Background(), tc.filter)
+			if err != nil {
+				t.Fatalf("CountMatching: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("count = %d, want %d", got, tc.want)
+			}
+			// The invariant that reassures the preview: the count equals the
+			// download's row count for the same filter.
+			rows, err := svc.ExpensesMatching(context.Background(), tc.filter)
+			if err != nil {
+				t.Fatalf("ExpensesMatching: %v", err)
+			}
+			if got != len(rows) {
+				t.Fatalf("count %d != download row count %d for the same filter", got, len(rows))
+			}
+		})
+	}
+}
+
 type expenseRepoStub struct {
 	create      func(e domain.Expense) (int64, error)
 	listInRange func(start, end string) ([]domain.Expense, error)
 	matching    func(f domain.ExpenseFilter) ([]domain.Expense, error)
+	count       func(f domain.ExpenseFilter) (int, error)
+	sample      func(f domain.ExpenseFilter, limit int) ([]domain.Expense, error)
+	categories  func() ([]string, error)
 }
 
 func (s *expenseRepoStub) CreateExpense(ctx context.Context, e domain.Expense) (int64, error) {
@@ -716,6 +784,27 @@ func (s *expenseRepoStub) ListExpensesInRange(ctx context.Context, start, end st
 func (s *expenseRepoStub) ExpensesMatching(ctx context.Context, f domain.ExpenseFilter) ([]domain.Expense, error) {
 	if s.matching != nil {
 		return s.matching(f)
+	}
+	return nil, nil
+}
+
+func (s *expenseRepoStub) CountMatching(ctx context.Context, f domain.ExpenseFilter) (int, error) {
+	if s.count != nil {
+		return s.count(f)
+	}
+	return 0, nil
+}
+
+func (s *expenseRepoStub) SampleMatching(ctx context.Context, f domain.ExpenseFilter, limit int) ([]domain.Expense, error) {
+	if s.sample != nil {
+		return s.sample(f, limit)
+	}
+	return nil, nil
+}
+
+func (s *expenseRepoStub) DistinctCategories(ctx context.Context) ([]string, error) {
+	if s.categories != nil {
+		return s.categories()
 	}
 	return nil, nil
 }
