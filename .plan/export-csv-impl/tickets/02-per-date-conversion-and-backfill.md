@@ -1,6 +1,8 @@
 ---
 type: task
 blocked_by: [01]
+claimed_by: claude-code-session-2026-07-16
+claimed_at: 2026-07-16T06:43:51Z
 ---
 
 # Per-date historical conversion and rate backfill

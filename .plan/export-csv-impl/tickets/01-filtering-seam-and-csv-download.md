@@ -55,3 +55,29 @@ Tests come **first**, red, per the spec's Testing Decisions:
 Done when: the named tests are green, `ListExpensesInRange` is a delegate with daily-timeline's
 callers unbroken, and a browser hitting `/export.csv?from=…&to=…` downloads a real, correctly
 escaped CSV whose converted columns are (for now) blank.
+
+## Answer
+
+Delivered as specified; the tests landed first and red
+(`TestBuildRecords_ColumnsFormattingAndBlanks` could not compile until `buildRecords`'s
+signature existed), then the implementation turned them green.
+
+- `domain.ExpenseFilter{Start, End, Category, PayerID}` (zero-values = "all") drives one deep
+  `ExpensesMatching(ctx, ExpenseFilter)` at the repository through a single `filterWhere` helper —
+  the shared filter→`WHERE` mapping tickets 03/04 reuse — with a service passthrough.
+  `ListExpensesInRange` is now a one-line delegate, so daily-timeline's callers stay untouched
+  while the duplicated SELECT collapses into `ExpensesMatching`.
+- A pure `buildRecords(rows, resolve, pref)` emits the ten columns (header as record 0, money via
+  `FormatFloat(v,'f',-1,64)`, absence as a blank cell, `currency_converted` on every row) with the
+  rate lookup **injected**. This ticket passes a no-op resolver, so `amount_converted`/`rate_date`
+  ship blank; ticket 02 supplies the real one. Conversion's cross-rate was factored into a pure
+  `service.CrossRate` so the builder reuses the views' exact math.
+- `GET /export.csv` streams BOM → CRLF `csv.Writer` → header → rows, with every status
+  (400 unparseable/inverted, header-only 200 on zero matches) decided pre-stream; the 503 rate
+  branch is ticket 02's.
+- Verified live: a real download carried the BOM, CRLF, and a quote-doubled hostile field
+  round-trip.
+
+- **For ticket 02:** the resolver seam is `resolve(date) → (rates, rateDate)`; wire the real
+  historical lookup behind it, and slot the 503 rate-failure branch into the pre-stream error
+  order (step 3, after the range 400s).
