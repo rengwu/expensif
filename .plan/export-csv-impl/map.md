@@ -70,6 +70,25 @@ scratch store needs no calls. The wayfinder linter for this map:
   `0001..9999` bare range), and skipped entirely when nothing needs converting. Verified on the wire:
   BOM/CRLF, Sat→Fri `rate_date`, unconvertible `ZZZ` blank at 200.
 
+- [The Export page and its preview fragment](./tickets/03-export-page-and-preview-fragment.md) —
+  `GET /export` renders the guided form (`templates/export.html`, from the approved ticket-05
+  markup): presets-as-links resolved server-side by a pure `exportRange` into the download form's
+  `from`/`to` (so a hidden-but-submitted input pair makes the download match the preview), a Custom
+  toggle, and Category/Payer selects (`""`/`0` = all). Category options come from a net-new
+  `DistinctCategories` (`SELECT DISTINCT category`), separate from the recency-ranked `ListCategories`.
+  `CountMatching` (`COUNT(*)`) and `SampleMatching` (`LIMIT 10`) join `ExpensesMatching` on the shared
+  `filterWhere` via a new `queryExpenses(f, limit)` helper — so **preview count == download row count
+  by construction**, asserted at the service seam and over in-memory SQLite (`expenses_test.go`). A
+  reusable `export-preview` partial renders the count + up to ten **raw** rows (entered
+  amount+currency), money pre-formatted in Go by the CSV's `FormatFloat(-1)` rule via
+  `ExportSampleRow`; the handler server-renders it on first paint (the island is 04, so its mount is
+  present but unloaded — first paint is static). `ExportPageData` embeds `PageData` and renders via a
+  new `Renderer.RenderPage(any)`. Nav sits in the `⋮` overflow beside Preferences on desktop and
+  mobile (`MobileNav`'s `preferences` slot generalised to a `secondary[]`). Two spec-consistent
+  notes: `data-props` drops `prefCurrency` (per the live-preview contract), and the overflow entry
+  reaches mobile too. Verified live: count matches the submitted-filter download across
+  presets/category/custom, raw amounts, distinct-category dropdown, preset highlight, empty state.
+
 ## Not yet specified
 
 <!-- Empty. Every decision is settled in the spec; this map only executes it. Nothing is
