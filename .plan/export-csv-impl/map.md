@@ -1,0 +1,64 @@
+# Export to CSV — implementation
+
+## Destination
+
+The export-csv spec ([`.plan/export-csv/spec.md`](../export-csv/spec.md)) implemented end
+to end: an Export page filters the account's expenses by date range, category, and payer and
+streams a spreadsheet-ready CSV — each row carrying the entered amount *and* an amount
+converted at its own-date historical rate — with a live preview of count and sample rows. All
+the spec's named tests pass, and the architecture docs reflect what shipped.
+
+## Notes
+
+**This map carries execution.** Every ticket is a `task` that delivers working code, not a
+decision — all decisions were made on the
+[export-csv planning map](../export-csv/map.md) and synthesized into the
+[spec](../export-csv/spec.md), which is the single source of truth here. Do not re-litigate a
+decision; if implementation exposes one as wrong, mark the *planning* ticket undermined and
+raise it, rather than quietly deviating.
+
+Every session: read the spec in full, then this map, then your ticket, then the approved
+asset(s) the ticket names ([`export-page.html.approved`](../export-csv/assets/export-page.html.approved)
+for the page/preview tickets). Use `CONTEXT.md`'s vocabulary. The `review-code` skill (in
+`.pocock-skills/`) reviews the diff before commit; the `verify`/`run` skills drive the real
+page — download an actual file and open it, since the encoding contract (BOM, CRLF, quoting)
+and the live preview are only real on the wire.
+
+Per-ticket checks: `go test ./...`, `go vet ./...`, `cd ui && npx tsc --noEmit` (and
+`cd ui && npx vitest run` when TS changes). Tests land **before** implementation where the
+spec's Testing Decisions say so — the leading red is
+`TestBuildRecords_ColumnsFormattingAndBlanks` (ticket 01).
+
+Environment: `make dev` runs air (:8080) + Vite (:8081); the Go server caches templates at
+startup, so restart after template edits. The user's dev database (`~/.expensif/expenses.db`)
+must not be seeded — prototype against a scratch DB via `DATA_DIR=<tmp> PORT=8090 go run
+./cmd/server`. Ticket 02 hits Frankfurter's time-series endpoint on a cold range; mock it at
+the `RateFetcher` seam in tests, and don't hammer the live API when eyeballing — a warmed
+scratch store needs no calls. The wayfinder linter for this map:
+`cd ../wayfinder && go run ./cmd/wayfinder-maps lint ../expensif/.plan/export-csv-impl`.
+
+## Decisions so far
+
+<!-- one line per resolved ticket: gist + link. Empty until the first ticket resolves. -->
+
+## Not yet specified
+
+<!-- Empty. Every decision is settled in the spec; this map only executes it. Nothing is
+foggy — a ticket that exposes a genuinely new question sends it back to the planning map,
+it does not open fog here. -->
+
+## Out of scope
+
+<!-- Inherited from the spec's Out of Scope; these never graduate into tickets on this map. -->
+
+- **Formats other than CSV** (Excel/`.xlsx`, JSON, PDF) — a fresh effort each.
+- **Scheduled/recurring exports** and **emailing/uploading** the file — the page produces a
+  download on demand, nothing more.
+- **Wiring the List View (`/expenses`) to the server-side `ExpensesMatching` seam** — the
+  seam is built general enough to serve it later, but no code lands for a caller that doesn't
+  yet exist.
+- **Multi-select category/payer** — the seam is single-value equality.
+- **Comma-decimal-locale accommodation** — one canonical US/ISO file; other-locale users
+  import via their spreadsheet's text-import dialog (documented, not built).
+- **Migrating money from `float64` to integer minor units** — a pre-existing modelling choice
+  this effort does not relitigate.
