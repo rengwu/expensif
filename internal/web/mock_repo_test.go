@@ -83,6 +83,37 @@ func (r *mockRepo) ListExpensesInRange(_ context.Context, start, end string) ([]
 	return result, nil
 }
 
+func (r *mockRepo) ExpensesMatching(_ context.Context, f domain.ExpenseFilter) ([]domain.Expense, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []domain.Expense
+	for _, e := range r.expenses {
+		if e.Date < f.Start || e.Date > f.End {
+			continue
+		}
+		if f.Category != "" && e.Category != f.Category {
+			continue
+		}
+		if f.PayerID != 0 && e.PaidByID != f.PayerID {
+			continue
+		}
+		if e.PaidByID != 0 {
+			if name, ok := r.users[e.PaidByID]; ok {
+				e.PaidByName = name
+			}
+		}
+		result = append(result, e)
+	}
+	// Newest first, matching the SQL ORDER BY e.date DESC, e.created_at DESC.
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Date != result[j].Date {
+			return result[i].Date > result[j].Date
+		}
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
+	return result, nil
+}
+
 func (r *mockRepo) GetExpense(_ context.Context, id int64) (*domain.Expense, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

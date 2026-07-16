@@ -41,6 +41,20 @@ scratch store needs no calls. The wayfinder linter for this map:
 
 <!-- one line per resolved ticket: gist + link. Empty until the first ticket resolves. -->
 
+- [The filtering seam and the streaming CSV download](./tickets/01-filtering-seam-and-csv-download.md) —
+  `domain.ExpenseFilter` (zero-values = "all") drives one deep `ExpensesMatching` at the
+  repository through a single `filterWhere` helper (the shared filter→`WHERE` mapping 03/04/09
+  reuse), with a service passthrough; `ListExpensesInRange` is now a one-line delegate, daily's
+  callers untouched. A pure `buildRecords(rows, resolve, pref)` emits the ten columns (header as
+  record 0, money via `FormatFloat(v,'f',-1,64)`, absence as a blank cell, `currency_converted`
+  on every row) with the rate lookup **injected** — this ticket passes a no-op resolver, so
+  `amount_converted`/`rate_date` ship blank; ticket 02 supplies the real one. `GET /export.csv`
+  streams BOM → CRLF `csv.Writer` → header → rows, with every status (400 unparseable/inverted,
+  header-only 200 on zero matches) decided pre-stream; the 503 rate branch is 02's. Conversion's
+  cross-rate factored into a pure `service.CrossRate` so the builder reuses the views' exact math.
+  Verified live: a real download carried the BOM, CRLF, and a quote-doubled hostile field
+  round-trip. Leading red was `TestBuildRecords_ColumnsFormattingAndBlanks`, as designed.
+
 ## Not yet specified
 
 <!-- Empty. Every decision is settled in the spec; this map only executes it. Nothing is

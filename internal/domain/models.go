@@ -15,6 +15,16 @@ type Expense struct {
 	ConvertedAmount float64   `json:"convertedAmount"` // computed at render time
 }
 
+// ExpenseFilter narrows a set of expenses to a required date range and,
+// optionally, a single category and/or payer. Zero-values mean "all": an empty
+// Category matches every category and a PayerID of 0 matches every payer, so a
+// bare range exports everything within it.
+type ExpenseFilter struct {
+	Start, End string // required date range (YYYY-MM-DD, inclusive)
+	Category   string // "" = all categories
+	PayerID    int64  // 0  = all payers
+}
+
 type Preferences struct {
 	Currency string `json:"currency"`
 	UserID   int64  `json:"userId"`

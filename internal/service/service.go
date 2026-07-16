@@ -100,6 +100,13 @@ func (s *Service) ExpensesInRange(ctx context.Context, start, end string) ([]dom
 	return s.expenses.ListExpensesInRange(ctx, start, end)
 }
 
+// ExpensesMatching returns the raw expenses matching the filter (newest first),
+// leaving conversion to the caller. It is the single filtering seam; the List
+// View is intentionally not wired to it yet.
+func (s *Service) ExpensesMatching(ctx context.Context, f domain.ExpenseFilter) ([]domain.Expense, error) {
+	return s.expenses.ExpensesMatching(ctx, f)
+}
+
 func (s *Service) UpdateExpense(ctx context.Context, id int64, amount float64, category, description, date, currency string, paidByID int64) error {
 	category, description, date, currency, err := validateExpenseInput(amount, category, description, date, currency)
 	if err != nil {
@@ -313,6 +320,15 @@ func (s *Service) GetRatesForConversion(ctx context.Context) (map[string]float64
 }
 
 func (s *Service) ConvertWithRates(amount float64, from, to string, rates map[string]float64) (float64, error) {
+	return CrossRate(amount, from, to, rates)
+}
+
+// CrossRate converts amount from one currency to another via a single base's
+// rate set (rates[X] is X per base). It is a pure function so callers outside a
+// Service — such as the CSV record builder — can reuse the exact conversion the
+// views use. Same-currency short-circuits; a currency the set doesn't cover is
+// an error, which the caller renders as a blank cell rather than a zero.
+func CrossRate(amount float64, from, to string, rates map[string]float64) (float64, error) {
 	if from == to {
 		return amount, nil
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"expensif/internal/domain"
@@ -66,14 +67,44 @@ func (r *sqliteRepo) ListExpenses(ctx context.Context, limit int) ([]domain.Expe
 	return expenses, rows.Err()
 }
 
+// ListExpensesInRange is the whole-range case of ExpensesMatching, kept as a
+// named seam for daily-timeline's callers.
 func (r *sqliteRepo) ListExpensesInRange(ctx context.Context, start, end string) ([]domain.Expense, error) {
+	return r.ExpensesMatching(ctx, domain.ExpenseFilter{Start: start, End: end})
+}
+
+// filterWhere builds the WHERE clause and args for an ExpenseFilter. The date
+// range is always present; category and payer are appended only when set, so a
+// zero-value field means "all". It is the single home of the filter→SQL mapping,
+// so every reader of the filter (the download here, the preview count and sample
+// later) narrows identically — the preview count equals the download by
+// construction.
+func filterWhere(f domain.ExpenseFilter) (string, []any) {
+	clauses := []string{"e.date BETWEEN ? AND ?"}
+	args := []any{f.Start, f.End}
+	if f.Category != "" {
+		clauses = append(clauses, "e.category = ?")
+		args = append(args, f.Category)
+	}
+	if f.PayerID != 0 {
+		clauses = append(clauses, "e.paid_by = ?")
+		args = append(args, f.PayerID)
+	}
+	return strings.Join(clauses, " AND "), args
+}
+
+// ExpensesMatching returns the raw expenses matching the filter, newest first.
+// ConvertedAmount is not populated — conversion is the handler's job — but
+// PaidByName rides the existing LEFT JOIN.
+func (r *sqliteRepo) ExpensesMatching(ctx context.Context, f domain.ExpenseFilter) ([]domain.Expense, error) {
+	where, args := filterWhere(f)
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT e.id, e.amount, e.category, e.description, e.date, e.currency, e.paid_by, u.name, e.created_at
 		 FROM expenses e
 		 LEFT JOIN users u ON e.paid_by = u.id
-		 WHERE e.date BETWEEN ? AND ?
+		 WHERE `+where+`
 		 ORDER BY e.date DESC, e.created_at DESC`,
-		start, end,
+		args...,
 	)
 	if err != nil {
 		return nil, err

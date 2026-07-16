@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"expensif/internal/domain"
@@ -482,9 +483,69 @@ func TestUpcomingGroups_UnparseableAfterIsError(t *testing.T) {
 }
 
 // expenseRepoStub is a minimal stub for expense repository tests.
+func TestExpensesMatching(t *testing.T) {
+	// A fixed dataset the stub filters as a reference implementation, so each
+	// case pins the ExpenseFilter contract: unset (zero-value) means "all",
+	// while a set field is an equality narrow.
+	all := []domain.Expense{
+		{ID: 1, Category: "food", PaidByID: 10, Date: "2026-01-01"},
+		{ID: 2, Category: "travel", PaidByID: 10, Date: "2026-01-02"},
+		{ID: 3, Category: "food", PaidByID: 20, Date: "2026-01-03"},
+	}
+	var gotFilter domain.ExpenseFilter
+	stub := &expenseRepoStub{matching: func(f domain.ExpenseFilter) ([]domain.Expense, error) {
+		gotFilter = f
+		var out []domain.Expense
+		for _, e := range all {
+			if e.Date < f.Start || e.Date > f.End {
+				continue
+			}
+			if f.Category != "" && e.Category != f.Category {
+				continue
+			}
+			if f.PayerID != 0 && e.PaidByID != f.PayerID {
+				continue
+			}
+			out = append(out, e)
+		}
+		return out, nil
+	}}
+	svc := New(repository.Repos{Expenses: stub}, &mockRateClient{})
+
+	cases := []struct {
+		name   string
+		filter domain.ExpenseFilter
+		wantID []int64
+	}{
+		{"unset = all", domain.ExpenseFilter{Start: "2026-01-01", End: "2026-01-31"}, []int64{1, 2, 3}},
+		{"category", domain.ExpenseFilter{Start: "2026-01-01", End: "2026-01-31", Category: "food"}, []int64{1, 3}},
+		{"payer", domain.ExpenseFilter{Start: "2026-01-01", End: "2026-01-31", PayerID: 10}, []int64{1, 2}},
+		{"category and payer", domain.ExpenseFilter{Start: "2026-01-01", End: "2026-01-31", Category: "food", PayerID: 10}, []int64{1}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := svc.ExpensesMatching(context.Background(), tc.filter)
+			if err != nil {
+				t.Fatalf("ExpensesMatching: %v", err)
+			}
+			if gotFilter != tc.filter {
+				t.Fatalf("service altered the filter: got %+v, want %+v", gotFilter, tc.filter)
+			}
+			var ids []int64
+			for _, e := range rows {
+				ids = append(ids, e.ID)
+			}
+			if !reflect.DeepEqual(ids, tc.wantID) {
+				t.Fatalf("ids = %v, want %v", ids, tc.wantID)
+			}
+		})
+	}
+}
+
 type expenseRepoStub struct {
 	create      func(e domain.Expense) (int64, error)
 	listInRange func(start, end string) ([]domain.Expense, error)
+	matching    func(f domain.ExpenseFilter) ([]domain.Expense, error)
 }
 
 func (s *expenseRepoStub) CreateExpense(ctx context.Context, e domain.Expense) (int64, error) {
@@ -501,6 +562,13 @@ func (s *expenseRepoStub) ListExpenses(ctx context.Context, limit int) ([]domain
 func (s *expenseRepoStub) ListExpensesInRange(ctx context.Context, start, end string) ([]domain.Expense, error) {
 	if s.listInRange != nil {
 		return s.listInRange(start, end)
+	}
+	return nil, nil
+}
+
+func (s *expenseRepoStub) ExpensesMatching(ctx context.Context, f domain.ExpenseFilter) ([]domain.Expense, error) {
+	if s.matching != nil {
+		return s.matching(f)
 	}
 	return nil, nil
 }
