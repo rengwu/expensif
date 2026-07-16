@@ -55,6 +55,21 @@ scratch store needs no calls. The wayfinder linter for this map:
   Verified live: a real download carried the BOM, CRLF, and a quote-doubled hostile field
   round-trip. Leading red was `TestBuildRecords_ColumnsFormattingAndBlanks`, as designed.
 
+- [Per-date historical conversion and rate backfill](./tickets/02-per-date-conversion-and-backfill.md) —
+  `rate.Client.Timeseries` fetches Frankfurter's `/{start}..{end}` once (date→target→rate, base at
+  1.0); added to `RateFetcher`. `Service.EnsureRatesForRange` backfills only when `rangeCovered`
+  (a two-pointer walk over business days, covered when a stored rate sits within a 7-day
+  `rateLookback` on-or-before each weekday) reports a gap — so a weekend/holiday reads covered and a
+  second export makes zero calls; the fetch widens 7 days before `from` so a leading weekend resolves
+  to its prior trading day. `RatesOnOrBefore` (repo) returns the nearest stored set + matched date —
+  the codebase's first repository test proves Sat→Fri over in-memory SQLite (`db.Migrate` exported);
+  `RateDatesInRange` feeds the coverage probe. The handler slots the backfill at pre-stream step 3
+  (error → **503**, no file), then a memoised `resolve` backed by `RatesOnOrBefore` + `CrossRate`
+  fills `amount_converted`/`rate_date`; unconvertible currencies blank without failing. Two
+  spec-consistent refinements: backfill is driven by the converting rows' own date-span (not the
+  `0001..9999` bare range), and skipped entirely when nothing needs converting. Verified on the wire:
+  BOM/CRLF, Sat→Fri `rate_date`, unconvertible `ZZZ` blank at 200.
+
 ## Not yet specified
 
 <!-- Empty. Every decision is settled in the spec; this map only executes it. Nothing is

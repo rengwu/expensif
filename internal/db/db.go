@@ -29,14 +29,16 @@ func New() (*sql.DB, error) {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
-	if err := migrate(db); err != nil {
+	if err := Migrate(db); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
 	return db, nil
 }
 
-func migrate(db *sql.DB) error {
+// Migrate creates the schema on a fresh database. Exported so tests can spin up
+// an in-memory store with the real tables rather than a hand-copied subset.
+func Migrate(db *sql.DB) error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS expenses (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,

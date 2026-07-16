@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -60,6 +61,10 @@ func TestBuildRecords_ZeroRowsHeaderOnly(t *testing.T) {
 }
 
 func exportHandler(t *testing.T, seed func(*mockRepo)) *HTMLHandler {
+	return exportHandlerWithRates(t, seed, &mockRateClient{})
+}
+
+func exportHandlerWithRates(t *testing.T, seed func(*mockRepo), client *mockRateClient) *HTMLHandler {
 	t.Helper()
 	repo := newMockRepo()
 	if seed != nil {
@@ -70,8 +75,99 @@ func exportHandler(t *testing.T, seed func(*mockRepo)) *HTMLHandler {
 		Users:       repo,
 		Preferences: repo,
 		Rates:       repo,
-	}, &mockRateClient{})
+	}, client)
 	return NewHTMLHandler(svc, nil)
+}
+
+// exportDataRows runs the handler and returns the CSV data rows (header dropped),
+// after stripping the BOM.
+func exportDataRows(t *testing.T, h *HTMLHandler, query string) (int, [][]string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/export.csv"+query, nil)
+	h.HandleExportCSV(rec, req)
+	if rec.Code != http.StatusOK {
+		return rec.Code, nil
+	}
+	body := bytes.TrimPrefix(rec.Body.Bytes(), []byte{0xEF, 0xBB, 0xBF})
+	records, err := csv.NewReader(bytes.NewReader(body)).ReadAll()
+	if err != nil {
+		t.Fatalf("parse csv: %v", err)
+	}
+	return rec.Code, records[1:]
+}
+
+// oneEUROnMonday seeds a single 80 EUR expense on Monday 2026-02-02.
+func oneEUROnMonday(r *mockRepo) {
+	r.CreateExpense(context.Background(), domain.Expense{
+		Amount: 80, Category: "travel", Description: "hotel", Date: "2026-02-02", Currency: "EUR",
+	})
+}
+
+// TestHandleExportCSV_ConvertsAtOwnDateRate proves a normal row carries an
+// amount converted at its own date's rate, with the rate date surfaced.
+func TestHandleExportCSV_ConvertsAtOwnDateRate(t *testing.T) {
+	client := &mockRateClient{tsFunc: func(start, end string) map[string]map[string]float64 {
+		// 0.8 EUR per USD on the expense's date, so 80 EUR -> 100 USD.
+		return map[string]map[string]float64{"2026-02-02": {"USD": 1.0, "EUR": 0.8}}
+	}}
+	h := exportHandlerWithRates(t, oneEUROnMonday, client)
+
+	code, rows := exportDataRows(t, h, "?from=2026-02-02&to=2026-02-02")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 data row, got %d", len(rows))
+	}
+	// Columns 7,8,9 are amount_converted, currency_converted, rate_date.
+	if got := rows[0]; got[7] != "100" || got[8] != "USD" || got[9] != "2026-02-02" {
+		t.Fatalf("converted columns = %q/%q/%q, want 100/USD/2026-02-02", got[7], got[8], got[9])
+	}
+}
+
+// TestHandleExportCSV_UnconvertibleCurrencyBlankNot503 proves a row whose
+// currency the obtained rate set doesn't cover leaves amount_converted and
+// rate_date blank (currency_converted still present) — a clean 200, not a 503.
+func TestHandleExportCSV_UnconvertibleCurrencyBlankNot503(t *testing.T) {
+	client := &mockRateClient{tsFunc: func(start, end string) map[string]map[string]float64 {
+		// The date's rates are present but don't cover ZZZ.
+		return map[string]map[string]float64{"2026-02-02": {"USD": 1.0, "EUR": 0.8}}
+	}}
+	h := exportHandlerWithRates(t, func(r *mockRepo) {
+		r.CreateExpense(context.Background(), domain.Expense{
+			Amount: 9.99, Category: "misc", Description: "odd", Date: "2026-02-02", Currency: "ZZZ",
+		})
+	}, client)
+
+	code, rows := exportDataRows(t, h, "?from=2026-02-02&to=2026-02-02")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (unconvertible must not fail)", code)
+	}
+	if got := rows[0]; got[7] != "" || got[9] != "" {
+		t.Fatalf("amount_converted/rate_date = %q/%q, want both blank", got[7], got[9])
+	}
+	if got := rows[0]; got[8] != "USD" {
+		t.Fatalf("currency_converted = %q, want USD present on every row", got[8])
+	}
+}
+
+// TestHandleExportCSV_RateProviderDown503 proves a down provider fails the export
+// with a 503 and no file when a row actually needs converting.
+func TestHandleExportCSV_RateProviderDown503(t *testing.T) {
+	client := &mockRateClient{tsErr: errors.New("provider down")}
+	h := exportHandlerWithRates(t, oneEUROnMonday, client)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/export.csv?from=2026-02-02&to=2026-02-02", nil)
+	h.HandleExportCSV(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte{0xEF, 0xBB, 0xBF}) {
+		t.Fatalf("a 503 must not stream a CSV (found the BOM)")
+	}
 }
 
 func TestHandleExportCSV_StatusOrder(t *testing.T) {

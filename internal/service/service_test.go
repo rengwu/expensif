@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
+	"sort"
 	"testing"
+	"time"
 
 	"expensif/internal/domain"
 	"expensif/internal/repository"
@@ -15,10 +18,28 @@ type mockRateClient struct {
 	rates map[string]float64
 	date  string
 	err   error
+
+	// Timeseries doubles: tsCalls counts invocations (to prove caching skips the
+	// fetch), tsErr forces a provider failure, and tsFunc supplies the returned
+	// series for a requested [start, end].
+	tsCalls int
+	tsErr   error
+	tsFunc  func(start, end string) map[string]map[string]float64
 }
 
 func (m *mockRateClient) Latest(ctx context.Context, base string) (map[string]float64, string, error) {
 	return m.rates, m.date, m.err
+}
+
+func (m *mockRateClient) Timeseries(ctx context.Context, base, start, end string) (map[string]map[string]float64, error) {
+	m.tsCalls++
+	if m.tsErr != nil {
+		return nil, m.tsErr
+	}
+	if m.tsFunc != nil {
+		return m.tsFunc(start, end), nil
+	}
+	return map[string]map[string]float64{}, nil
 }
 
 // mockRateRepo implements only the RateRepository interface for testing.
@@ -52,6 +73,17 @@ func (r *mockRateRepo) GetLatestRates(ctx context.Context, base string) (map[str
 		cp[k] = v
 	}
 	return cp, r.date, nil
+}
+
+func (r *mockRateRepo) RatesOnOrBefore(ctx context.Context, base, date string) (map[string]float64, string, error) {
+	return r.GetLatestRates(ctx, base)
+}
+
+func (r *mockRateRepo) RateDatesInRange(ctx context.Context, base, from, to string) ([]string, error) {
+	if r.saved != nil && r.saved[base] != nil && r.date >= from && r.date <= to {
+		return []string{r.date}, nil
+	}
+	return nil, nil
 }
 
 // Compile-time interface checks.
@@ -100,6 +132,121 @@ func TestRefreshRates_FetchError_NoSave(t *testing.T) {
 	}
 	if repo.saved != nil {
 		t.Fatal("expected no save on fetch error")
+	}
+}
+
+// --- EnsureRatesForRange ---
+
+// dateRateStore is a date-aware in-memory RateRepository for the backfill tests:
+// it keys rates by date as the real store does, so coverage probing and
+// on-or-before resolution are exercised honestly rather than flattened.
+type dateRateStore struct {
+	byDate map[string]map[string]float64 // date -> target -> rate
+}
+
+func newDateRateStore() *dateRateStore {
+	return &dateRateStore{byDate: map[string]map[string]float64{}}
+}
+
+func (s *dateRateStore) SaveRates(_ context.Context, base, date string, rates map[string]float64) error {
+	cp := make(map[string]float64, len(rates))
+	for k, v := range rates {
+		cp[k] = v
+	}
+	s.byDate[date] = cp
+	return nil
+}
+
+func (s *dateRateStore) GetRates(_ context.Context, base, date string) (map[string]float64, error) {
+	if r, ok := s.byDate[date]; ok {
+		return r, nil
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (s *dateRateStore) GetLatestRates(_ context.Context, base string) (map[string]float64, string, error) {
+	var latest string
+	for d := range s.byDate {
+		if d > latest {
+			latest = d
+		}
+	}
+	if latest == "" {
+		return nil, "", sql.ErrNoRows
+	}
+	return s.byDate[latest], latest, nil
+}
+
+func (s *dateRateStore) RatesOnOrBefore(_ context.Context, base, date string) (map[string]float64, string, error) {
+	var matched string
+	for d := range s.byDate {
+		if d <= date && d > matched {
+			matched = d
+		}
+	}
+	if matched == "" {
+		return nil, "", sql.ErrNoRows
+	}
+	return s.byDate[matched], matched, nil
+}
+
+func (s *dateRateStore) RateDatesInRange(_ context.Context, base, from, to string) ([]string, error) {
+	var dates []string
+	for d := range s.byDate {
+		if d >= from && d <= to {
+			dates = append(dates, d)
+		}
+	}
+	sort.Strings(dates)
+	return dates, nil
+}
+
+var _ repository.RateRepository = (*dateRateStore)(nil)
+
+// businessDayRates returns a USD-based series with one rate set per weekday in
+// [start, end], mimicking Frankfurter's omission of weekends.
+func businessDayRates(start, end string) map[string]map[string]float64 {
+	out := map[string]map[string]float64{}
+	s, _ := time.Parse("2006-01-02", start)
+	e, _ := time.Parse("2006-01-02", end)
+	for d := s; !d.After(e); d = d.AddDate(0, 0, 1) {
+		if wd := d.Weekday(); wd == time.Saturday || wd == time.Sunday {
+			continue
+		}
+		out[d.Format("2006-01-02")] = map[string]float64{"USD": 1.0, "EUR": 0.9}
+	}
+	return out
+}
+
+func TestEnsureRatesForRange_FetchesOnceThenCaches(t *testing.T) {
+	store := newDateRateStore()
+	client := &mockRateClient{tsFunc: businessDayRates}
+	svc := New(repository.Repos{Rates: store}, client)
+
+	// Cold range (Mon–Fri): the store lacks every business day, so one fetch runs.
+	if err := svc.EnsureRatesForRange(context.Background(), "2026-01-05", "2026-01-09"); err != nil {
+		t.Fatalf("cold range: unexpected error: %v", err)
+	}
+	if client.tsCalls != 1 {
+		t.Fatalf("cold range: expected exactly 1 Timeseries call, got %d", client.tsCalls)
+	}
+
+	// Second export over the same range: fully covered, so zero further calls.
+	if err := svc.EnsureRatesForRange(context.Background(), "2026-01-05", "2026-01-09"); err != nil {
+		t.Fatalf("cached range: unexpected error: %v", err)
+	}
+	if client.tsCalls != 1 {
+		t.Fatalf("cached range: expected no further calls, got %d total", client.tsCalls)
+	}
+}
+
+func TestEnsureRatesForRange_ProviderError(t *testing.T) {
+	store := newDateRateStore()
+	client := &mockRateClient{tsErr: errors.New("provider down")}
+	svc := New(repository.Repos{Rates: store}, client)
+
+	if err := svc.EnsureRatesForRange(context.Background(), "2026-01-05", "2026-01-09"); err == nil {
+		t.Fatal("expected an error when Timeseries fails, got nil")
 	}
 }
 

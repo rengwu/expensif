@@ -1,8 +1,6 @@
 ---
 type: task
 blocked_by: [01]
-claimed_by: claude-code-session-2026-07-16
-claimed_at: 2026-07-16T06:43:51Z
 ---
 
 # Per-date historical conversion and rate backfill
@@ -55,3 +53,43 @@ Done when: the named tests are green, a cold range triggers exactly one Frankfur
 caches, provider-down yields a clean 503 with no file, and a downloaded CSV shows honest
 per-date converted amounts (weekend rows using the prior trading day, unconvertible currencies
 blank).
+
+## Answer
+
+Delivered as specified; the tests landed first and red (interface additions broke the mocks'
+compile until the methods existed), then the implementation turned them green.
+
+- **`rate.Client.Timeseries(ctx, base, start, end)`** fetches Frankfurter's `/{start}..{end}`
+  endpoint once, decoding `rates` (date → target → rate) and injecting the base at `1.0` per date
+  so a cross-rate anchors — the exact shape `Latest` already uses. Added to the `RateFetcher`
+  interface.
+- **`Service.EnsureRatesForRange`** fetches only when the store lacks coverage, then caches. The
+  cache key is `rangeCovered`: a two-pointer walk over the business days (Mon–Fri) of `[from, to]`,
+  a weekday counting as covered when a stored rate sits within `rateLookback` (7 days) on-or-before
+  it. That window is what lets an ordinary weekend gap **and** a provider-omitted weekday holiday
+  read as covered — so a second export makes **zero** calls — while a genuine un-fetched span
+  (larger than the window) still triggers the backfill. The fetch itself is widened `rateLookback`
+  before `from`, so a weekend/holiday expense at the very start still has a prior trading day to
+  resolve to. A `Timeseries` transport error is the only hard failure (→ handler 503); a range the
+  provider simply has no data for converts to blanks, not a failure.
+- **`RatesOnOrBefore(base, date)`** at the repository (`date = (SELECT MAX(date) … WHERE date <= ?)`)
+  returns the nearest stored rate set and the date it matched — the codebase's first repository test
+  proves Sat→Fri over in-memory SQLite (`db.Migrate` was exported so the test builds the real
+  schema). A supporting `RateDatesInRange` feeds the coverage probe in one query.
+- **Handler wiring:** after the range 400s, the backfill runs (step 3) and maps its error to 503
+  before the first byte; then a memoised `resolve(date)` backed by `RatesOnOrBefore` + the existing
+  `service.CrossRate` fills `amount_converted`/`rate_date`. `currency_converted` is always present;
+  unconvertible currencies leave the two converted cells blank without failing.
+- **Two deliberate refinements, both spec-consistent** (surfaced here, not slipped in): the backfill
+  is driven by the matched rows' own date-span — of the rows that *need* converting — rather than the
+  raw filter range, because a bare export's range is `0001..9999` and walking/fetching that is absurd;
+  and the fetch is skipped entirely when no row needs converting (all already in the preferred
+  currency), so a single-currency export never 503s on a provider it doesn't need. Neither weakens
+  user story 20 — it refuses only when rates the export *actually needs* can't be obtained.
+- Verified on the wire against a warmed scratch store (no live call): BOM + CRLF intact, a hostile
+  field round-tripped, an EUR row converted at its own date, a **Saturday** row resolved to the prior
+  **Friday**'s `rate_date`, and an unconvertible `ZZZ` row blanked cleanly at a 200.
+
+- **For ticket 03/04:** the preview routes must **not** call `EnsureRatesForRange` — they show raw
+  amounts only, so the whole 503 surface stays on `/export.csv`, exactly as the spec's preview
+  contract requires.

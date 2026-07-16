@@ -29,6 +29,13 @@ var exportColumns = []string{
 // the real historical-rate lookup.
 type rateResolver func(date string) (rates map[string]float64, rateDate string)
 
+// resolvedRate memoises one date's on-or-before lookup for the export handler's
+// resolver, so rows sharing a date read the store once.
+type resolvedRate struct {
+	rates map[string]float64
+	date  string
+}
+
 // buildRecords turns raw expenses into CSV records — the header as record 0,
 // then one record per expense in the ten-column order. Money is written with
 // FormatFloat(v,'f',-1,64): the shortest decimal that round-trips the stored
@@ -69,11 +76,10 @@ func formatMoney(v float64) string {
 }
 
 // HandleExportCSV streams the account's expenses, narrowed by the query filter,
-// as a UTF-8 CSV the browser saves. Every status-bearing failure (400 on a bad
-// or inverted range) happens before the first byte, so the stream itself never
-// needs to unwind. Zero matches is a legitimate header-only 200, not an error.
-// (Conversion columns are blank until ticket 02 wires the rate resolver; ticket
-// 02 also adds the 503 rate-failure branch here.)
+// as a UTF-8 CSV the browser saves. Every status-bearing failure happens before
+// the first byte, so the stream itself never needs to unwind: 400 on a bad or
+// inverted range, then 503 when the historical rates the rows need can't be
+// obtained. Zero matches is a legitimate header-only 200, not an error.
 func (h *HTMLHandler) HandleExportCSV(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -102,9 +108,35 @@ func (h *HTMLHandler) HandleExportCSV(w http.ResponseWriter, r *http.Request) {
 		pref = prefs.Currency
 	}
 
-	// No conversion this ticket: the resolver always reports "no rate", so the
-	// converted columns are blank. Ticket 02 replaces it with the real lookup.
-	resolve := func(string) (map[string]float64, string) { return nil, "" }
+	// Backfill the historical rates the matched rows actually need — the span of
+	// their own dates, not the (possibly open-ended) filter range — then convert
+	// each row at its own-date rate. A provider that can't be reached is a hard
+	// 503 with no file, decided here before the first byte, rather than shipping
+	// today's-rate guesses. The fetch is skipped when nothing needs converting
+	// (no rows, or every row already in the preferred currency), so a
+	// single-currency export never fails on a down provider it doesn't need.
+	if lo, hi, ok := conversionSpan(rows, pref); ok {
+		if err := h.svc.EnsureRatesForRange(ctx, lo, hi); err != nil {
+			http.Error(w, "Exchange rates are temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
+
+	// Resolve each expense's date to its on-or-before rate set, memoised so rows
+	// sharing a date hit the store once. A date with no stored rate yields "",
+	// which buildRecords renders as blank converted columns.
+	rateCache := make(map[string]resolvedRate)
+	resolve := func(date string) (map[string]float64, string) {
+		if hit, ok := rateCache[date]; ok {
+			return hit.rates, hit.date
+		}
+		rates, rateDate, err := h.svc.RatesOnOrBefore(ctx, date)
+		if err != nil {
+			rates, rateDate = nil, ""
+		}
+		rateCache[date] = resolvedRate{rates, rateDate}
+		return rates, rateDate
+	}
 	records := buildRecords(rows, resolve, pref)
 
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
@@ -144,6 +176,30 @@ func parseExportRange(from, to string) (start, end string, err error) {
 		return "", "", service.ErrInvalidRange
 	}
 	return start, end, nil
+}
+
+// conversionSpan returns the earliest and latest dates among the rows that
+// actually need converting (currency other than pref), so rate backfill covers
+// exactly the dates in play rather than the filter's possibly open-ended range.
+// ok is false when no row needs conversion — nothing to convert, so nothing to
+// fetch and no way to 503.
+func conversionSpan(rows []domain.Expense, pref string) (lo, hi string, ok bool) {
+	for _, e := range rows {
+		if e.Currency == pref {
+			continue
+		}
+		if !ok {
+			lo, hi, ok = e.Date, e.Date, true
+			continue
+		}
+		if e.Date < lo {
+			lo = e.Date
+		}
+		if e.Date > hi {
+			hi = e.Date
+		}
+	}
+	return lo, hi, ok
 }
 
 func parsePayerID(s string) int64 {

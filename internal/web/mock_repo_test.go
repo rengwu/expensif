@@ -20,8 +20,7 @@ type mockRepo struct {
 	expenses   []domain.Expense
 	nextID     int64
 	prefs      domain.Preferences
-	rates      map[string]map[string]float64 // base -> target -> rate
-	rateDates  map[string]string             // base -> date
+	rates      map[string]map[string]map[string]float64 // base -> date -> target -> rate
 	users      map[int64]string
 	nextUserID int64
 }
@@ -31,8 +30,7 @@ func newMockRepo() *mockRepo {
 		expenses:   make([]domain.Expense, 0),
 		nextID:     1,
 		prefs:      domain.Preferences{Currency: "USD"},
-		rates:      make(map[string]map[string]float64),
-		rateDates:  make(map[string]string),
+		rates:      make(map[string]map[string]map[string]float64),
 		users:      make(map[int64]string),
 		nextUserID: 1,
 	}
@@ -249,26 +247,31 @@ func (r *mockRepo) SavePreferences(_ context.Context, p domain.Preferences) erro
 	return nil
 }
 
+func copyRates(rates map[string]float64) map[string]float64 {
+	cp := make(map[string]float64, len(rates))
+	for k, v := range rates {
+		cp[k] = v
+	}
+	return cp
+}
+
 func (r *mockRepo) SaveRates(_ context.Context, base string, date string, rates map[string]float64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.rates[base] = make(map[string]float64, len(rates))
-	for k, v := range rates {
-		r.rates[base][k] = v
+	if r.rates[base] == nil {
+		r.rates[base] = make(map[string]map[string]float64)
 	}
-	r.rateDates[base] = date
+	r.rates[base][date] = copyRates(rates)
 	return nil
 }
 
-func (r *mockRepo) GetRates(_ context.Context, base string, _ string) (map[string]float64, error) {
+func (r *mockRepo) GetRates(_ context.Context, base string, date string) (map[string]float64, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if rates, ok := r.rates[base]; ok && len(rates) > 0 {
-		cp := make(map[string]float64, len(rates))
-		for k, v := range rates {
-			cp[k] = v
+	if byDate, ok := r.rates[base]; ok {
+		if rates, ok := byDate[date]; ok && len(rates) > 0 {
+			return copyRates(rates), nil
 		}
-		return cp, nil
 	}
 	return nil, sql.ErrNoRows
 }
@@ -276,14 +279,44 @@ func (r *mockRepo) GetRates(_ context.Context, base string, _ string) (map[strin
 func (r *mockRepo) GetLatestRates(_ context.Context, base string) (map[string]float64, string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if rates, ok := r.rates[base]; ok && len(rates) > 0 {
-		cp := make(map[string]float64, len(rates))
-		for k, v := range rates {
-			cp[k] = v
+	var latest string
+	for d := range r.rates[base] {
+		if d > latest {
+			latest = d
 		}
-		return cp, r.rateDates[base], nil
 	}
-	return nil, "", sql.ErrNoRows
+	if latest == "" {
+		return nil, "", sql.ErrNoRows
+	}
+	return copyRates(r.rates[base][latest]), latest, nil
+}
+
+func (r *mockRepo) RatesOnOrBefore(_ context.Context, base string, date string) (map[string]float64, string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var matched string
+	for d := range r.rates[base] {
+		if d <= date && d > matched {
+			matched = d
+		}
+	}
+	if matched == "" {
+		return nil, "", sql.ErrNoRows
+	}
+	return copyRates(r.rates[base][matched]), matched, nil
+}
+
+func (r *mockRepo) RateDatesInRange(_ context.Context, base string, from, to string) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var dates []string
+	for d := range r.rates[base] {
+		if d >= from && d <= to {
+			dates = append(dates, d)
+		}
+	}
+	sort.Strings(dates)
+	return dates, nil
 }
 
 func (r *mockRepo) ListUsers(_ context.Context) ([]domain.User, error) {
@@ -362,10 +395,23 @@ type mockRateClient struct {
 	rates map[string]float64
 	date  string
 	err   error
+
+	tsErr  error
+	tsFunc func(start, end string) map[string]map[string]float64
 }
 
 func (m *mockRateClient) Latest(ctx context.Context, base string) (map[string]float64, string, error) {
 	return m.rates, m.date, m.err
+}
+
+func (m *mockRateClient) Timeseries(ctx context.Context, base, start, end string) (map[string]map[string]float64, error) {
+	if m.tsErr != nil {
+		return nil, m.tsErr
+	}
+	if m.tsFunc != nil {
+		return m.tsFunc(start, end), nil
+	}
+	return map[string]map[string]float64{}, nil
 }
 
 var _ repository.Repository = (*mockRepo)(nil)

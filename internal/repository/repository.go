@@ -30,6 +30,15 @@ type RateRepository interface {
 	SaveRates(ctx context.Context, base string, date string, rates map[string]float64) error
 	GetRates(ctx context.Context, base string, date string) (map[string]float64, error)
 	GetLatestRates(ctx context.Context, base string) (map[string]float64, string, error)
+	// RatesOnOrBefore returns the nearest stored rate set on or before date and
+	// the date it actually matched, so a weekend/holiday expense resolves to the
+	// prior trading day's rate over the now-dense store. sql.ErrNoRows when the
+	// store holds nothing at or before date.
+	RatesOnOrBefore(ctx context.Context, base string, date string) (map[string]float64, string, error)
+	// RateDatesInRange returns the distinct dates the store holds for base within
+	// [from, to], ascending — the coverage probe EnsureRatesForRange reads to
+	// decide whether a range still needs backfilling.
+	RateDatesInRange(ctx context.Context, base string, from, to string) ([]string, error)
 }
 
 type UserRepository interface {

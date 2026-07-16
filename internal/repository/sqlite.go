@@ -446,6 +446,62 @@ func (r *sqliteRepo) GetRates(ctx context.Context, base string, date string) (ma
 	return rates, rows.Err()
 }
 
+func (r *sqliteRepo) RatesOnOrBefore(ctx context.Context, base string, date string) (map[string]float64, string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT target_currency, rate, date
+		FROM exchange_rates
+		WHERE base_currency = ?
+		  AND date = (
+		    SELECT MAX(date) FROM exchange_rates
+		    WHERE base_currency = ? AND date <= ?
+		  )
+	`, base, base, date)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+
+	rates := make(map[string]float64)
+	var matched string
+	for rows.Next() {
+		var target string
+		var rate float64
+		if err := rows.Scan(&target, &rate, &matched); err != nil {
+			return nil, "", err
+		}
+		rates[target] = rate
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if len(rates) == 0 {
+		return nil, "", sql.ErrNoRows
+	}
+	return rates, matched, nil
+}
+
+func (r *sqliteRepo) RateDatesInRange(ctx context.Context, base string, from, to string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT date FROM exchange_rates
+		WHERE base_currency = ? AND date >= ? AND date <= ?
+		ORDER BY date ASC
+	`, base, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var dates []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		dates = append(dates, d)
+	}
+	return dates, rows.Err()
+}
+
 func (r *sqliteRepo) GetLatestRates(ctx context.Context, base string) (map[string]float64, string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT target_currency, rate, date

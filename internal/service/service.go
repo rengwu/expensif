@@ -24,6 +24,7 @@ var (
 
 type RateFetcher interface {
 	Latest(ctx context.Context, base string) (map[string]float64, string, error)
+	Timeseries(ctx context.Context, base, start, end string) (map[string]map[string]float64, error)
 }
 
 type Service struct {
@@ -294,6 +295,106 @@ func (s *Service) DeleteUser(ctx context.Context, id int64) error {
 }
 
 // --- Exchange Rates ---
+
+// rateBase is the single base currency the historical rate store is keyed on;
+// every conversion is a cross-rate through it.
+const rateBase = "USD"
+
+// rateLookback widens a backfill (and the coverage probe) a week before a
+// range's start, so a weekend or holiday expense at the very start of the range
+// still finds a prior trading day's rate. It doubles as the freshness window in
+// rangeCovered: a business day counts as covered when a stored rate sits within
+// this many days on-or-before it, which is why an ordinary weekend gap (and a
+// provider-omitted weekday holiday) reads as covered rather than forcing a
+// re-fetch on every export.
+const rateLookback = 7 * 24 * time.Hour
+
+// EnsureRatesForRange backfills the historical rate store so every business day
+// in [from, to] is covered, fetching Frankfurter's time-series endpoint exactly
+// once — and only when the store lacks a business day the range needs. A second
+// export over an already-covered range makes zero network calls. It errors only
+// when the fetch itself fails (a hung or down provider), which the handler maps
+// to a 503; a range the provider simply has no data for converts to blank cells
+// downstream, not a failure.
+func (s *Service) EnsureRatesForRange(ctx context.Context, from, to string) error {
+	fromT, err := time.Parse("2006-01-02", from)
+	if err != nil {
+		return ErrInvalidDate
+	}
+	toT, err := time.Parse("2006-01-02", to)
+	if err != nil {
+		return ErrInvalidDate
+	}
+	if fromT.After(toT) {
+		return nil
+	}
+
+	covered, err := s.rangeCovered(ctx, fromT, toT)
+	if err != nil {
+		return err
+	}
+	if covered {
+		return nil
+	}
+
+	fetchFrom := fromT.Add(-rateLookback).Format("2006-01-02")
+	series, err := s.rateClient.Timeseries(ctx, rateBase, fetchFrom, to)
+	if err != nil {
+		return fmt.Errorf("fetch rates: %w", err)
+	}
+	for date, rates := range series {
+		if err := s.rates.SaveRates(ctx, rateBase, date, rates); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rangeCovered reports whether the store already holds, for every business day
+// (Mon–Fri) in [from, to], a rate on-or-before it within rateLookback. Weekends
+// are skipped — the provider never quotes them. A weekday whose nearest stored
+// rate is older than the window (or absent) makes the range uncovered, so the
+// backfill runs; a fully-fetched range — including one spanning a provider-
+// omitted weekday holiday, covered by the prior trading day — reads as covered,
+// so re-exports fetch nothing. The probe reads dates from rateLookback before
+// `from` so a weekday at the very start still sees its prior trading day.
+func (s *Service) rangeCovered(ctx context.Context, from, to time.Time) (bool, error) {
+	probeFrom := from.Add(-rateLookback).Format("2006-01-02")
+	dates, err := s.rates.RateDatesInRange(ctx, rateBase, probeFrom, to.Format("2006-01-02"))
+	if err != nil {
+		return false, err
+	}
+	stored := make([]time.Time, 0, len(dates))
+	for _, d := range dates {
+		if t, err := time.Parse("2006-01-02", d); err == nil {
+			stored = append(stored, t) // RateDatesInRange returns them ascending
+		}
+	}
+
+	i := 0
+	var last time.Time
+	hasLast := false
+	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
+		for i < len(stored) && !stored[i].After(d) {
+			last, hasLast = stored[i], true
+			i++
+		}
+		if wd := d.Weekday(); wd == time.Saturday || wd == time.Sunday {
+			continue
+		}
+		if !hasLast || d.Sub(last) > rateLookback {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// RatesOnOrBefore returns the nearest stored rate set on-or-before date and the
+// date it matched, so a non-trading-day expense resolves to the prior trading
+// day's rate. The CSV export injects this as its per-row rate resolver.
+func (s *Service) RatesOnOrBefore(ctx context.Context, date string) (map[string]float64, string, error) {
+	return s.rates.RatesOnOrBefore(ctx, rateBase, date)
+}
 
 func (s *Service) RefreshRates(ctx context.Context) error {
 	rates, date, err := s.rateClient.Latest(ctx, "USD")
