@@ -89,6 +89,25 @@ scratch store needs no calls. The wayfinder linter for this map:
   reaches mobile too. Verified live: count matches the submitted-filter download across
   presets/category/custom, raw amounts, distinct-category dropdown, preset highlight, empty state.
 
+- [The live-preview endpoint and island](./tickets/04-live-preview-endpoint-and-island.md) —
+  `GET /export/preview` serves ticket 03's preview partial as a standalone fragment
+  (`RenderFragment` widened to `any`; a small `exportPreviewData` view model), parsing filters
+  identically to `/export.csv` and doing **zero rate work** — so it can never 503, keeping the
+  whole provider-failure surface on `/export.csv`. The **second vanilla-TS island**
+  (`export-preview.ts`, beside `daily-scroll`) reads the four filter values **live off the form**
+  (its single source of truth), debounces ~250 ms, and keeps **one fetch in flight** via
+  `AbortController` (a newer edit aborts the older, whose `catch` sees the abort and bows out),
+  then does `slot.innerHTML = text` — parsing/formatting nothing. First paint stays
+  server-rendered, so it fetches only on change; the island splits its mount into a preview slot +
+  a hint line so soft failures never clear the last good preview or block Download: `400` → inline
+  "Check the dates", network/5xx → "Preview unavailable" (the next edit retries naturally, no Retry
+  button), zero matches → the partial's own 200 empty state. A thin handler test asserts
+  status/shape (200 fragment / soft 400), not markup. One spec-consistent placement note: the
+  handler lives in `export.go` beside its siblings (`HandleExportCSV`, `parseExportRange`,
+  `exportSampleRows`), not `handlers_html.go` as the ticket's prose predated the `export.go` split.
+  Verified on the wire (endpoint statuses, escaping, island script wiring); the live-browser
+  eyeball of the debounce/DOM-swap is the one check left to the operator.
+
 ## Not yet specified
 
 <!-- Empty. Every decision is settled in the spec; this map only executes it. Nothing is
