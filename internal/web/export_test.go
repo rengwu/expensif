@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,4 +298,71 @@ func TestHandleExportCSV_CategoryAndPayerFilter(t *testing.T) {
 	if got := dataRows(""); len(got) != 3 {
 		t.Errorf("bare: expected all 3 rows, got %d", len(got))
 	}
+}
+
+// previewFixture builds an export handler over a real renderer (the preview
+// endpoint renders a fragment) so the thin status/shape checks below run against
+// the actual partial.
+func previewFixture(t *testing.T, seed func(*mockRepo)) *HTMLHandler {
+	t.Helper()
+	repo := newMockRepo()
+	if seed != nil {
+		seed(repo)
+	}
+	svc := service.New(repository.Repos{
+		Expenses:    repo,
+		Users:       repo,
+		Preferences: repo,
+		Rates:       repo,
+	}, &mockRateClient{})
+	renderer, err := NewRenderer("../../templates", false, nil)
+	if err != nil {
+		t.Fatalf("renderer init failed: %v", err)
+	}
+	return NewHTMLHandler(svc, renderer)
+}
+
+// TestHandleExportPreview asserts the preview endpoint's status/shape contract —
+// not its markup: a valid filter returns a 200 fragment whose count reflects the
+// matches, a zero-match filter is still a 200 (agreeing with the header-only
+// download), and a bad or inverted range is the soft 400 the island shows as a
+// hint. The preview does no rate work, so it can never 503.
+func TestHandleExportPreview(t *testing.T) {
+	h := previewFixture(t, func(r *mockRepo) {
+		ctx := context.Background()
+		r.CreateExpense(ctx, domain.Expense{Amount: 1, Category: "food", Description: "lunch", Date: "2026-04-01", Currency: "USD"})
+		r.CreateExpense(ctx, domain.Expense{Amount: 2, Category: "travel", Description: "cab", Date: "2026-04-02", Currency: "USD"})
+	})
+
+	serve := func(query string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.HandleExportPreview(rec, httptest.NewRequest(http.MethodGet, "/export/preview"+query, nil))
+		return rec
+	}
+
+	t.Run("valid filter returns fragment with the matches", func(t *testing.T) {
+		rec := serve("?from=2026-04-01&to=2026-04-30")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "lunch") || !strings.Contains(body, "cab") {
+			t.Errorf("expected both sample rows in fragment, got: %s", body)
+		}
+	})
+
+	t.Run("zero matches is a 200", func(t *testing.T) {
+		rec := serve("?from=2020-01-01&to=2020-12-31")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for zero matches, got %d", rec.Code)
+		}
+	})
+
+	t.Run("bad and inverted ranges are a soft 400", func(t *testing.T) {
+		for _, q := range []string{"?from=nonsense", "?from=2026-05-01&to=2026-04-01"} {
+			if rec := serve(q); rec.Code != http.StatusBadRequest {
+				t.Errorf("%s: expected 400, got %d", q, rec.Code)
+			}
+		}
+	})
 }

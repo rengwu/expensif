@@ -203,6 +203,9 @@ func NewRenderer(templatesDir string, dev bool, manifest assets.Manifest) (*Rend
 
 	fragments := map[string]*template.Template{
 		"daily-older": parseFragment(filepath.Join(templatesDir, "daily-older.html")),
+		// The Export preview is the same partial the /export page renders on first
+		// paint, served standalone so the input-driven island can re-fetch it.
+		"export-preview": parseFragment(filepath.Join(templatesDir, "partials", "export-preview.html")),
 	}
 
 	return &Renderer{templates: templates, fragments: fragments}, nil
@@ -225,8 +228,10 @@ func (r *Renderer) RenderPage(w http.ResponseWriter, name string, data any) erro
 }
 
 // RenderFragment writes a bare slice of HTML — no base layout — for a caller
-// that appends it into a page already on screen.
-func (r *Renderer) RenderFragment(w http.ResponseWriter, name string, data PageData) error {
+// that appends it into a page already on screen. The data value is arbitrary so
+// a fragment (like the Export preview) can carry its own view model rather than
+// the shared PageData.
+func (r *Renderer) RenderFragment(w http.ResponseWriter, name string, data any) error {
 	t, ok := r.fragments[name]
 	if !ok {
 		return fmt.Errorf("fragment %q not found", name)

@@ -16,6 +16,9 @@ export default defineConfig({
         mobileNav: resolve(__dirname, 'src/entries/mobile-nav.tsx'),
         // Not a React island: the daily view's infinite scroll is plain TS.
         dailyScroll: resolve(__dirname, 'src/entries/daily-scroll.ts'),
+        // Not a React island either: the Export page's live preview is plain TS
+        // that fetches a server fragment and swaps it into place.
+        exportPreview: resolve(__dirname, 'src/entries/export-preview.ts'),
       },
       output: {
         entryFileNames: 'js/[name].js',

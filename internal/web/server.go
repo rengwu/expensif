@@ -24,6 +24,7 @@ func NewServer(api *APIHandler, html *HTMLHandler, port string) *Server {
 	mux.HandleFunc("GET /expenses", html.HandleList)
 	mux.HandleFunc("GET /export", html.HandleExportPage)
 	mux.HandleFunc("GET /export.csv", html.HandleExportCSV)
+	mux.HandleFunc("GET /export/preview", html.HandleExportPreview)
 	mux.HandleFunc("GET /preferences", html.HandlePreferences)
 	mux.HandleFunc("POST /preferences", html.HandleSavePreferences)
 	mux.HandleFunc("GET /expenses/new", html.HandleAdd)

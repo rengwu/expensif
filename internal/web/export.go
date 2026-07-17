@@ -15,6 +15,11 @@ import (
 // the download, ordered identically.
 const exportPreviewSampleSize = 10
 
+// exportPreviewIsland is the Export page's live-preview script. Like
+// daily-scroll, it names its extension because it is not a React island — plain
+// TypeScript that fetches the preview fragment and swaps it into place.
+const exportPreviewIsland = "export-preview.ts"
+
 // ExportPageData is the Export page's view model: the shared PageData (nav,
 // currency, today) plus the page's own controls and the first-paint preview. Its
 // Categories field ([]string of the account's distinct categories) deliberately
@@ -90,6 +95,7 @@ func (h *HTMLHandler) HandleExportPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
 	data := h.basePageData(ctx, "export")
+	data.Islands = append(data.Islands, exportPreviewIsland)
 
 	preset, from, to, custom := exportRange(q.Get("preset"), q.Get("from"), q.Get("to"), data.Today)
 
@@ -144,6 +150,55 @@ func (h *HTMLHandler) HandleExportPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.renderer.RenderPage(w, "export", epd); err != nil {
 		slog.Error("render failed", "template", "export", "error", err)
+		http.Error(w, "render error", http.StatusInternalServerError)
+	}
+}
+
+// exportPreviewData is the preview fragment's view model — just the two fields
+// the export-preview partial reads. The /export page's first paint fills these
+// from ExportPageData; the /export/preview endpoint serves the same partial with
+// this smaller shape as filters change.
+type exportPreviewData struct {
+	PreviewCount int
+	PreviewRows  []ExportSampleRow
+}
+
+// HandleExportPreview serves the live-preview fragment: the same partial the
+// Export page renders on first paint (a count line plus up to ten raw sample
+// rows), re-rendered for the current filters as the input-driven island refetches
+// it. It parses filters identically to /export.csv and does zero rate work, so it
+// can never 503 — a bad or inverted range is a soft 400 (via httpDateRangeError)
+// the island shows as an inline hint, and zero matches is a header-only 200.
+func (h *HTMLHandler) HandleExportPreview(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.URL.Query()
+
+	start, end, err := parseExportRange(q.Get("from"), q.Get("to"))
+	if err != nil {
+		httpDateRangeError(w, err)
+		return
+	}
+	filter := domain.ExpenseFilter{
+		Start:    start,
+		End:      end,
+		Category: q.Get("category"),
+		PayerID:  parsePayerID(q.Get("payer")),
+	}
+
+	count, err := h.svc.CountMatching(ctx, filter)
+	if err != nil {
+		http.Error(w, "Failed to count expenses", http.StatusInternalServerError)
+		return
+	}
+	sample, err := h.svc.SampleMatching(ctx, filter, exportPreviewSampleSize)
+	if err != nil {
+		http.Error(w, "Failed to read expenses", http.StatusInternalServerError)
+		return
+	}
+
+	data := exportPreviewData{PreviewCount: count, PreviewRows: exportSampleRows(sample)}
+	if err := h.renderer.RenderFragment(w, "export-preview", data); err != nil {
+		slog.Error("render failed", "fragment", "export-preview", "error", err)
 		http.Error(w, "render error", http.StatusInternalServerError)
 	}
 }
