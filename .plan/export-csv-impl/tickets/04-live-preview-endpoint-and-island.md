@@ -2,6 +2,8 @@
 type: task
 blocked_by: [03]
 assets: [.plan/export-csv/assets/export-page.html.approved]
+claimed_by: s1b45620e7b79
+claimed_at: 2026-07-25T18:22:50Z
 ---
 
 # The live-preview endpoint and island
