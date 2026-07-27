@@ -108,6 +108,25 @@ scratch store needs no calls. The wayfinder linter for this map:
   Verified on the wire (endpoint statuses, escaping, island script wiring); the live-browser
   eyeball of the debounce/DOM-swap is the one check left to the operator.
 
+- [Docs and architecture catch up with what shipped](./tickets/05-docs-and-architecture.md) —
+  ADR 0001's existing note gains ticket 07's drafted paragraph (no new ADR): the Export preview is the
+  **second** vanilla-TS island, **input-driven** where daily-scroll is **scroll-triggered**, the shared
+  rule generalised to "an island that only moves server-rendered HTML into the page needs no React —
+  whether a scroll appends it or a filter change replaces it", and the effort's "a form + link needs no
+  island" reversal recorded as *decided*; its heading widened to name both efforts. `CONTEXT.md` gains
+  **Export** and **Export Preview** after List View, with `ExpensesMatching`/`CountMatching` riding
+  inside the Export entry the way **Payer** notes `paidBy`, and **Island** generalised to both vanilla
+  islands (List View left alone — the contrast already lives in Export). The sweep found no dead code,
+  templates or island registrations, but five comment blocks in `export.go`/`export.html`/the preview
+  partial still described shipped work as pending ("until that island ships", "ticket 02 supplies the
+  real lookup") — all rewritten to the present tense. **Two things flagged for a human:** `AGENTS.md`
+  *was* edited despite the ticket's "no change" — its Layout section is untouched, but the `.plan/`
+  inventory still called `daily-timeline` the active map and omitted this effort, which the Done-when's
+  "a fresh agent gets an accurate picture" made untenable; and the `data-props` on the export-preview
+  mount is **dead** (only the React `hydrate` path reads props; the island reads the form) yet spec'd,
+  so it was left for a human to delete. Docs-only: `go vet`/`go test` green, and the three export routes
+  re-checked at 200 to prove the touched templates still parse.
+
 ## Not yet specified
 
 <!-- Empty. Every decision is settled in the spec; this map only executes it. Nothing is
