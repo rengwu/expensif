@@ -34,9 +34,9 @@ Tests live beside the code they cover (`internal/web/handlers_api_test.go`, `ui/
 - `.plan/<slug>/map.md` + `.plan/<slug>/tickets/NN-<slug>.md` — wayfinder maps for large efforts.
 - `.plan/handoffs/<YYYY-MM-DD>-<slug>.md` — session handoffs, so a fresh agent can pick up work.
 
-Current contents: `.plan/expensif/` (project spec, brief, testing strategy), `.plan/react-islands/spec.md` (migration spec), `.plan/daily-timeline/` (active wayfinder map — daily view redesign), `.plan/handoffs/` (session history).
+Current contents: `.plan/expensif/` (project spec, brief, testing strategy), `.plan/react-islands/spec.md` (migration spec), `.plan/daily-timeline/` + `.plan/daily-timeline-impl/` (daily view redesign), `.plan/export-csv/` + `.plan/export-csv-impl/` (CSV export), `.plan/handoffs/` (session history). An effort is planned on a `<slug>` map and executed on a matching `<slug>-impl` one.
 
-How far along that map is, and which ticket is ready to claim, is derived from the tickets — never restated here, where it would drift. Read `.plan/daily-timeline/map.md` and scan `tickets/`.
+How far along a map is, and which ticket is ready to claim, is derived from its tickets — never restated here, where it would drift. Read the map's `map.md` and scan its `tickets/`.
 
 Read the most recent handoffs to catch up on project state. The `session-*.md` files there predate this naming convention and are kept as a historical archive — do not rewrite them; write new handoffs using the dated convention above.
 

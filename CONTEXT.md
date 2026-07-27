@@ -69,6 +69,14 @@ A monthly grid showing which days have expenses and how much was spent, using a 
 **List View**:
 A page showing all expenses in a single table with totals and conversion information.
 
+**Export**:
+Downloading the account's expenses as a CSV file, filtered by a date range plus an optional category and payer. Unlike the List View, whose filtering is client-side, Export filters on the server (the `ExpensesMatching` query, with a `CountMatching` sibling for the live count). One canonical US/ISO CSV: ten fixed columns, dot decimals, comma-separated, UTF-8 with a BOM.
+_Avoid_: report, dump, backup, download (as a noun for the feature)
+
+**Export Preview**:
+The live row count and a raw sample of the first rows shown on the Export page as the filters change, so the size and contents are visible before committing to a download. The sample shows each expense's entered amount and currency, not the converted amount — conversion happens only in the downloaded file.
+_Avoid_: preview pane, dry run
+
 **Category Suggestion**:
 A recently used category offered as a quick-select pill in the add/edit form.
 
@@ -84,7 +92,7 @@ A 1–5 quintile rank of a day's total spend relative to other days with any spe
 _Avoid_: intensity, score
 
 **Island**:
-A selectively hydrated interactive region mounted on an otherwise server-rendered HTML page. Each island has a named container and an entry script. Most islands are React components; the Daily View's infinite scroll is a vanilla-TypeScript island that fetches and appends server-rendered HTML (see ADR 0001).
+A selectively hydrated interactive region mounted on an otherwise server-rendered HTML page. Each island has a named container and an entry script. Most islands are React components; the Daily View's infinite scroll and the Export page's live preview are vanilla-TypeScript islands that fetch and swap server-rendered HTML (see ADR 0001).
 _Avoid_: widget, component (when the specific partial-hydration pattern matters)
 
 ## Cross-Context Notes

@@ -5,9 +5,9 @@
   03) in place of the asset's "Loading preview…" placeholder.
 
   The date-range presets are plain links (server-fills from/to); "Custom…" reveals
-  the date inputs via the small toggle script below. The data-island mount is
-  present for ticket 04's live preview; until that island ships, the container
-  simply shows this server-rendered first paint (not yet live).
+  the date inputs via the small toggle script below. The data-island mount carries
+  the live preview: the server draws the first paint here, and the export-preview
+  island re-fetches it from /export/preview as the filters change.
 */}}
 {{define "title"}}Export{{end}}
 {{define "content"}}
@@ -62,9 +62,9 @@
   <div class="bg-white rounded-none sm:rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 space-y-4">
     <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">2 · Preview &amp; download</div>
 
-    {{/* ISLAND (ticket 04). Watches the form's filter inputs and re-fetches this
-         same preview partial on change. First paint is server-rendered here, so
-         the island only fetches on change; until it ships, this preview is static. */}}
+    {{/* ISLAND. Watches the form's filter inputs and re-fetches this same preview
+         partial on change, reading the filter values live off the form. First
+         paint is server-rendered here, so the island only fetches on change. */}}
     <div data-island="export-preview"
          data-props='{"from":"{{.From}}","to":"{{.To}}","category":"{{.Category}}","payer":{{.PayerID}}}'>
       {{template "export-preview" .}}

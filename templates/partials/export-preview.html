@@ -2,11 +2,11 @@
   The Export preview fragment: a count line plus up to ten RAW sample rows
   (entered amount + currency, never the converted figure). Money is pre-formatted
   in Go (ExportSampleRow) by the same FormatFloat(v,'f',-1,64) rule the CSV uses,
-  so this template — and, in ticket 04, the island that fetches it over
-  /export/preview — renders strings with no formatting logic of its own.
+  so this template — and the island that fetches it over /export/preview —
+  renders strings with no formatting logic of its own.
 
-  Rendered on first paint by the /export page handler; served standalone as a
-  fragment by ticket 04. Reads .PreviewCount and .PreviewRows.
+  Rendered on first paint by the /export page handler, and served standalone as a
+  fragment by GET /export/preview. Reads .PreviewCount and .PreviewRows.
 */}}
 {{define "export-preview"}}
 <div class="space-y-3">

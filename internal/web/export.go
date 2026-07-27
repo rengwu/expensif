@@ -38,10 +38,10 @@ type ExportPageData struct {
 	PreviewRows  []ExportSampleRow // up to exportPreviewSampleSize raw sample rows
 }
 
-// ExportSampleRow is one preview row, pre-formatted in Go so the template (and,
-// in ticket 04, the island) render strings without any formatting logic. Amount
-// uses the same FormatFloat(v,'f',-1,64) rule the CSV uses; these are the entered
-// (raw) figures, never the converted ones.
+// ExportSampleRow is one preview row, pre-formatted in Go so the template — and
+// the island that fetches it — render strings without any formatting logic.
+// Amount uses the same FormatFloat(v,'f',-1,64) rule the CSV uses; these are the
+// entered (raw) figures, never the converted ones.
 type ExportSampleRow struct {
 	Date        string
 	Category    string
@@ -89,8 +89,8 @@ func exportRange(preset, from, to, today string) (outPreset, outFrom, outTo stri
 
 // HandleExportPage renders the guided Export page: the range/category/payer
 // controls and a server-rendered first-paint preview (count + raw sample) for the
-// initial filters. The live updating (island + /export/preview) is ticket 04; on
-// this page the preview is static.
+// initial filters. Because the first paint is server-rendered, the export-preview
+// island only fetches /export/preview once a filter actually changes.
 func (h *HTMLHandler) HandleExportPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -217,9 +217,9 @@ var exportColumns = []string{
 
 // rateResolver yields the rate set and rate date to use for an expense's date.
 // An empty rate date means no rates were available, so the converted columns
-// come out blank. It is injected so buildRecords stays pure and rate-free; this
-// ticket passes a no-op resolver (converted columns blank), ticket 02 supplies
-// the real historical-rate lookup.
+// come out blank. It is injected so buildRecords stays pure and rate-free: the
+// handler backs it with the historical-rate lookup (RatesOnOrBefore + CrossRate),
+// while tests pass a canned fake.
 type rateResolver func(date string) (rates map[string]float64, rateDate string)
 
 // resolvedRate memoises one date's on-or-before lookup for the export handler's
