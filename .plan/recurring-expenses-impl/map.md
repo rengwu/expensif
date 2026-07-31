@@ -72,6 +72,17 @@ database whose clock you can reason about. The wayfinder linter for this map:
   and the CSV export were proven byte-identical with and without the rule reference — no
   existing view changed.
   — [02](./tickets/02-generation-catch-up-and-end-date.md)
+- **The future belongs to the Rule; today and the past belong to the ledger.**
+  `Service.UpdateRule(ctx, rule, today)` rewrites the one strictly future Pending Charge in
+  full and recomputes its date from the prior occurrence when the schedule changes;
+  `SetRuleEnabled(ctx, id, enabled, today)` removes that future on pause and resumes at the
+  first anchored occurrence on or after today without Catch-up. A direct ordinary-Expense date
+  edit moves the Rule's `NextChargeDate` too, so generation and later Rule operations keep
+  owning the same charge. `DeleteRule(ctx, id, today)` is one SQLite transaction: delete the
+  strictly future linked Expense, clear the reference from everything that survives, then drop
+  the Rule. Ticket 04 must supply `today` in the configured Timezone to edit/toggle/delete; a
+  charge dated exactly today is ledger history and must not be rewritten or removed.
+  — [03](./tickets/03-what-a-rule-owns.md)
 
 ## Not yet specified
 
