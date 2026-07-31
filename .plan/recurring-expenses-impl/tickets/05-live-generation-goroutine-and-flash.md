@@ -1,6 +1,8 @@
 ---
 type: task
 blocked_by: [02]
+claimed_by: s44f7cbf18724
+claimed_at: 2026-07-31T15:06:54Z
 ---
 
 # Live generation: the background goroutine and its Flash
