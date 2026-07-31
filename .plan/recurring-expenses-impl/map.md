@@ -59,6 +59,19 @@ database whose clock you can reason about. The wayfinder linter for this map:
   the payer is **not** defaulted in the service, so ticket 04's form handler must pre-select it
   the way `HandleAdd` does; and `Enabled` is never defaulted, so that form must send it.
   — [01](./tickets/01-rule-store-and-anchor-arithmetic.md)
+- **Rules mint expenses.** `Service.GenerateCharges(ctx, today)` walks each enabled rule forward
+  from its stored date, minting every charge on its own true date until it lays down the one
+  after `today` — so catch-up is not a separate mode — and returns how many Expenses it created.
+  Idempotence is derived from the data, not from a flag: `ExpenseRepository.MintCharge` inserts
+  `ON CONFLICT … DO NOTHING` against ticket 01's partial unique index, so a repeated run creates
+  nothing and never overwrites an edited charge. Three things later tickets inherit: a rule's
+  `NextChargeDate` *is* its Pending Charge's date (not the one after it); the returned count
+  includes the pending charge as well as the backfilled ones, so ticket 05's Flash wording must
+  fit that; and a self-disabled rule keeps the computed date that overran its end date, so
+  ticket 04 should not render a next-charge date for a disabled rule unquestioned. The Ledger
+  and the CSV export were proven byte-identical with and without the rule reference — no
+  existing view changed.
+  — [02](./tickets/02-generation-catch-up-and-end-date.md)
 
 ## Not yet specified
 
