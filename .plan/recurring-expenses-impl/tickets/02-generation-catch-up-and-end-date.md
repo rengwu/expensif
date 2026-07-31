@@ -1,6 +1,8 @@
 ---
 type: task
 blocked_by: [01]
+claimed_by: scc81d1cfe1ee
+claimed_at: 2026-07-31T13:42:35Z
 ---
 
 # Generation: one charge ahead, catch-up, and the end date
