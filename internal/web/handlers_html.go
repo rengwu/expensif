@@ -44,10 +44,28 @@ type HTMLHandler struct {
 	svc      *service.Service
 	renderer *Renderer
 	now      func() time.Time // injectable so tests can pin "today"
+	notice   *Notice          // background messages waiting for a page to land on
 }
 
 func NewHTMLHandler(svc *service.Service, renderer *Renderer) *HTMLHandler {
-	return &HTMLHandler{svc: svc, renderer: renderer, now: time.Now}
+	return &HTMLHandler{svc: svc, renderer: renderer, now: time.Now, notice: &Notice{}}
+}
+
+// Notice is where a background worker leaves a message for the next page a
+// human loads. The rendered page is the only place a Flash can appear, so the
+// handler owns the notice and hands it out rather than being handed one.
+func (h *HTMLHandler) Notice() *Notice { return h.notice }
+
+// takeNotice moves a pending background message into this page's Flash. A flash
+// the page already set outranks it — an error the human just caused is the more
+// urgent of the two — and the notice simply waits for the page after.
+//
+// Only whole pages consume it. A fragment draws no base layout and so has
+// nowhere to show a Flash; consuming one there would swallow it silently.
+func (h *HTMLHandler) takeNotice(data *PageData) {
+	if data.Flash == "" {
+		data.Flash = h.notice.Take()
+	}
 }
 
 func (h *HTMLHandler) nowInTZ(tz string) time.Time {
@@ -78,6 +96,7 @@ func (h *HTMLHandler) basePageData(ctx context.Context, active string) PageData 
 }
 
 func (h *HTMLHandler) render(w http.ResponseWriter, name string, data PageData) {
+	h.takeNotice(&data)
 	if err := h.renderer.Render(w, name, data); err != nil {
 		slog.Error("render failed", "template", name, "error", err)
 		http.Error(w, "render error", http.StatusInternalServerError)

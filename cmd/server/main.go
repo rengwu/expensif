@@ -73,6 +73,13 @@ func main() {
 
 	apiHandler := web.NewAPIHandler(svc)
 	htmlHandler := web.NewHTMLHandler(svc, renderer)
+
+	// Recurring generation: mint what is owed now — closing any gap this process
+	// was down for — then on the generator's ticker. It is the only caller of
+	// generation in the running app, so no two runs can ever overlap, and it
+	// leaves its count on the handler's notice for the next page to flash.
+	go web.NewGenerator(svc, htmlHandler.Notice()).Run(ctx)
+
 	port := os.Getenv("PORT")
 	server := web.NewServer(apiHandler, htmlHandler, port)
 
@@ -93,7 +100,7 @@ func main() {
 		log.Fatalf("server error: %v", err)
 	}
 
-	cancel() // stop background goroutine
+	cancel() // stop background goroutines
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()

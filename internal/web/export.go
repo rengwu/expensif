@@ -135,6 +135,9 @@ func (h *HTMLHandler) HandleExportPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// This page carries its own view model, so it renders outside h.render —
+	// where every other whole page takes the notice.
+	h.takeNotice(&data)
 	epd := ExportPageData{
 		PageData:     data,
 		Preset:       preset,
