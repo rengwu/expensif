@@ -83,6 +83,19 @@ database whose clock you can reason about. The wayfinder linter for this map:
   the Rule. Ticket 04 must supply `today` in the configured Timezone to edit/toggle/delete; a
   charge dated exactly today is ledger history and must not be rewritten or removed.
   — [03](./tickets/03-what-a-rule-owns.md)
+- **Generation is live, and a goroutine can raise a Flash.** `web.Generator` runs
+  `GenerateCharges` once at startup and then **hourly**, on the context that already stops the
+  rate refresher, dating charges in the Preferences Timezone read fresh every pass. It is the
+  app's only caller, so double-generation stays impossible by construction; a failing run is
+  logged and the next tick retries. The thin seam is settled as **`web.Notice`**: an in-memory,
+  mutex-guarded count the generator adds to and the next *whole page* consumes exactly once
+  through the existing Flash plumbing — fragments never consume it, and a Flash the page already
+  set (an error the human caused) outranks it and leaves the notice for the page after. Two
+  things later tickets inherit: the Flash fires for *every* mint, worded "N recurring charges
+  added", so a quieter Catch-up-only message means splitting the count in the service; and a rule
+  created on the Recurring page has no Pending Charge until the next tick (≤1h), which ticket 04
+  must live with rather than generating from a handler.
+  — [05](./tickets/05-live-generation-goroutine-and-flash.md)
 
 ## Not yet specified
 
