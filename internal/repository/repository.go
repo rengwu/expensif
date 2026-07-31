@@ -8,6 +8,13 @@ import (
 
 type ExpenseRepository interface {
 	CreateExpense(ctx context.Context, e domain.Expense) (int64, error)
+	// MintCharge creates the expense a Recurring Rule owes for one of its dates
+	// and reports whether this call was the one to create it. A charge the rule
+	// has already minted for that date is left exactly as it stands — a human's
+	// edit to it included — so generation can run as often as it likes and the
+	// (rule, date) uniqueness constraint, not the caller's bookkeeping, is what
+	// makes double-charging impossible.
+	MintCharge(ctx context.Context, e domain.Expense) (bool, error)
 	ListExpenses(ctx context.Context, limit int) ([]domain.Expense, error)
 	ListExpensesInRange(ctx context.Context, start, end string) ([]domain.Expense, error)
 	ExpensesMatching(ctx context.Context, filter domain.ExpenseFilter) ([]domain.Expense, error)

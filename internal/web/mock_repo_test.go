@@ -50,6 +50,24 @@ func (r *mockRepo) CreateExpense(_ context.Context, e domain.Expense) (int64, er
 	return e.ID, nil
 }
 
+// MintCharge stands in for the partial unique index on (recurring_rule_id, date):
+// a date the rule has already charged is left alone, so a repeated generation run
+// creates nothing.
+func (r *mockRepo) MintCharge(ctx context.Context, e domain.Expense) (bool, error) {
+	r.mu.Lock()
+	for _, existing := range r.expenses {
+		if existing.RecurringRuleID == e.RecurringRuleID && existing.Date == e.Date {
+			r.mu.Unlock()
+			return false, nil
+		}
+	}
+	r.mu.Unlock()
+	if _, err := r.CreateExpense(ctx, e); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *mockRepo) ListExpenses(_ context.Context, limit int) ([]domain.Expense, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

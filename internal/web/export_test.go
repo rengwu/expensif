@@ -153,6 +153,36 @@ func TestHandleExportCSV_UnconvertibleCurrencyBlankNot503(t *testing.T) {
 	}
 }
 
+// TestHandleExportCSV_PendingChargeExportsLikeAHandEnteredExpense is the export
+// half of the same claim: a rule's charge is an ordinary expense, so it lands in
+// the file with no column, flag or omission of its own. The export runs twice
+// over identical data — once with the rule reference set, once without — and the
+// rows must match exactly.
+func TestHandleExportCSV_PendingChargeExportsLikeAHandEnteredExpense(t *testing.T) {
+	rowsFor := func(ruleID int64) [][]string {
+		t.Helper()
+		h := exportHandler(t, func(r *mockRepo) {
+			r.CreateExpense(context.Background(), domain.Expense{
+				Amount: 15.99, Category: "subscriptions", Description: "Netflix",
+				Date: "2026-08-15", Currency: "USD", RecurringRuleID: ruleID,
+			})
+		})
+		code, rows := exportDataRows(t, h, "?from=2026-08-01&to=2026-08-31")
+		if code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", code)
+		}
+		return rows
+	}
+
+	minted, handEntered := rowsFor(7), rowsFor(0)
+	if len(minted) != 1 {
+		t.Fatalf("the Pending Charge produced %d rows, want 1", len(minted))
+	}
+	if !reflect.DeepEqual(minted, handEntered) {
+		t.Errorf("a Pending Charge exports differently from a hand-entered expense\n got: %#v\nwant: %#v", minted, handEntered)
+	}
+}
+
 // TestHandleExportCSV_RateProviderDown503 proves a down provider fails the export
 // with a 503 and no file when a row actually needs converting.
 func TestHandleExportCSV_RateProviderDown503(t *testing.T) {

@@ -770,6 +770,14 @@ func (s *expenseRepoStub) CreateExpense(ctx context.Context, e domain.Expense) (
 	return 0, nil
 }
 
+func (s *expenseRepoStub) MintCharge(ctx context.Context, e domain.Expense) (bool, error) {
+	if s.create != nil {
+		_, err := s.create(e)
+		return err == nil, err
+	}
+	return false, nil
+}
+
 func (s *expenseRepoStub) ListExpenses(ctx context.Context, limit int) ([]domain.Expense, error) {
 	return nil, nil
 }

@@ -168,6 +168,77 @@ func TestRuleDateUniquenessRejectsDuplicates(t *testing.T) {
 	}
 }
 
+// TestMintChargeLeavesAnAlreadyMintedDateAlone proves what makes generation
+// repeatable: minting a date the rule has already charged reports "not created"
+// instead of failing, and — the part that matters most — it does not overwrite
+// the charge that is already there. A Pending Charge a human has edited down to
+// what the bank actually took must survive every subsequent generation run.
+func TestMintChargeLeavesAnAlreadyMintedDateAlone(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+	ruleID, err := repo.CreateRule(ctx, sampleRule())
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	charge := domain.Expense{
+		Amount: 15.99, Category: "subscriptions", Description: "Netflix",
+		Date: "2026-08-15", Currency: "USD", RecurringRuleID: ruleID,
+	}
+
+	created, err := repo.MintCharge(ctx, charge)
+	if err != nil {
+		t.Fatalf("MintCharge: %v", err)
+	}
+	if !created {
+		t.Fatal("the first charge for a date reported that it created nothing")
+	}
+
+	// A human corrects the pending charge, then generation runs again.
+	minted, err := repo.ListExpensesInRange(ctx, "2026-08-15", "2026-08-15")
+	if err != nil || len(minted) != 1 {
+		t.Fatalf("ListExpensesInRange: got %d expenses, err %v", len(minted), err)
+	}
+	edited := minted[0]
+	edited.Amount = 17.99
+	if err := repo.UpdateExpense(ctx, edited); err != nil {
+		t.Fatalf("UpdateExpense: %v", err)
+	}
+
+	created, err = repo.MintCharge(ctx, charge)
+	if err != nil {
+		t.Fatalf("second MintCharge: %v", err)
+	}
+	if created {
+		t.Error("minting an already-charged date reported that it created a second charge")
+	}
+	after, err := repo.ListExpensesInRange(ctx, "2026-08-15", "2026-08-15")
+	if err != nil {
+		t.Fatalf("ListExpensesInRange: %v", err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("got %d expenses on the date, want the one charge: %+v", len(after), after)
+	}
+	if after[0].Amount != 17.99 || after[0].ID != edited.ID {
+		t.Errorf("the edited charge was overwritten: %+v", after[0])
+	}
+
+	// Only that rule on that date is blocked; the next date, and another rule's
+	// charge on the same date, are ordinary business.
+	next := charge
+	next.Date = "2026-09-15"
+	if created, err := repo.MintCharge(ctx, next); err != nil || !created {
+		t.Errorf("next month's charge: created %v, err %v", created, err)
+	}
+	otherID, err := repo.CreateRule(ctx, sampleRule())
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	other := charge
+	other.RecurringRuleID = otherID
+	if created, err := repo.MintCharge(ctx, other); err != nil || !created {
+		t.Errorf("another rule charging the same date: created %v, err %v", created, err)
+	}
+}
+
 func TestExpenseCarriesItsRuleReference(t *testing.T) {
 	repo, ctx := newTestRepo(t)
 	ruleID, err := repo.CreateRule(ctx, sampleRule())

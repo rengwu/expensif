@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"testing"
 
 	"expensif/internal/domain"
@@ -475,6 +477,356 @@ func TestDeleteRule(t *testing.T) {
 	rules, _ := svc.ListRules(ctx)
 	if len(rules) != 0 {
 		t.Errorf("ListRules returned %+v after the only rule was deleted", rules)
+	}
+}
+
+// --- Generation ---
+
+// chargeStore is an in-memory ExpenseRepository for the generation tests. It
+// enforces the one guarantee generation leans on — a rule cannot mint two
+// charges on one date — because in production that is the (rule, date) unique
+// index doing it, and a double that quietly allowed duplicates would make every
+// idempotence assertion below meaningless. The rest of the expense surface,
+// which generation never touches, comes from the embedded stub.
+type chargeStore struct {
+	expenseRepoStub
+	expenses []domain.Expense
+	nextID   int64
+}
+
+func newChargeStore() *chargeStore { return &chargeStore{nextID: 1} }
+
+func (s *chargeStore) MintCharge(_ context.Context, e domain.Expense) (bool, error) {
+	for _, existing := range s.expenses {
+		if existing.RecurringRuleID == e.RecurringRuleID && existing.Date == e.Date {
+			return false, nil
+		}
+	}
+	e.ID = s.nextID
+	s.nextID++
+	s.expenses = append(s.expenses, e)
+	return true, nil
+}
+
+func (s *chargeStore) ListExpensesInRange(_ context.Context, start, end string) ([]domain.Expense, error) {
+	var out []domain.Expense
+	for _, e := range s.expenses {
+		if e.Date >= start && e.Date <= end {
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Date > out[j].Date }) // newest first, as the SQL orders
+	return out, nil
+}
+
+var _ repository.ExpenseRepository = (*chargeStore)(nil)
+
+// newGeneratingService wires a service over both in-memory stores, the pair
+// generation reads and writes.
+func newGeneratingService(t *testing.T) (*Service, *ruleStore, *chargeStore) {
+	t.Helper()
+	rules, charges := newRuleStore(), newChargeStore()
+	svc := New(repository.Repos{
+		Rules:       rules,
+		Expenses:    charges,
+		Preferences: &prefsStub{prefs: domain.Preferences{Currency: "USD"}},
+	}, &mockRateClient{})
+	return svc, rules, charges
+}
+
+// chargeDates reports the dates of every expense that exists, oldest first —
+// "which expenses exist after generation runs", read back through the service.
+func chargeDates(t *testing.T, svc *Service) []string {
+	t.Helper()
+	expenses, err := svc.ExpensesInRange(context.Background(), "0001-01-01", "9999-12-31")
+	if err != nil {
+		t.Fatalf("ExpensesInRange: %v", err)
+	}
+	var dates []string
+	for _, e := range expenses {
+		dates = append(dates, e.Date)
+	}
+	sort.Strings(dates)
+	return dates
+}
+
+func assertDates(t *testing.T, svc *Service, want ...string) {
+	t.Helper()
+	got := chargeDates(t, svc)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("charges exist on %v, want %v", got, want)
+	}
+}
+
+// generatingRule is validRule() with its first charge on 2026-08-15, ready to be
+// stored and generated from.
+func generatingRule() domain.RecurringRule {
+	return validRule()
+}
+
+// TestGenerateCharges_MaterializesOneChargeAhead covers the whole "a Pending
+// Charge is an ordinary Expense" clause: one charge exists after the supplied
+// date, it carries every field the rule states, and the rule's advertised next
+// charge date is that charge's date.
+func TestGenerateCharges_MaterializesOneChargeAhead(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	r := generatingRule()
+	r.PaidByID = 4
+	id, err := svc.CreateRule(ctx, r)
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+
+	minted, err := svc.GenerateCharges(ctx, "2026-07-31")
+	if err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	if minted != 1 {
+		t.Fatalf("minted %d charges, want the one ahead", minted)
+	}
+
+	expenses, err := svc.ExpensesInRange(ctx, "0001-01-01", "9999-12-31")
+	if err != nil {
+		t.Fatalf("ExpensesInRange: %v", err)
+	}
+	if len(expenses) != 1 {
+		t.Fatalf("got %d expenses, want exactly one Pending Charge: %+v", len(expenses), expenses)
+	}
+	got := expenses[0]
+	want := domain.Expense{
+		ID:              got.ID,
+		Amount:          15.99,
+		Category:        "subscriptions",
+		Description:     "Netflix", // the rule's Name is the charge's Description
+		Date:            "2026-08-15",
+		Currency:        "USD",
+		PaidByID:        4,
+		RecurringRuleID: id,
+	}
+	if got != want {
+		t.Errorf("Pending Charge = %+v, want %+v", got, want)
+	}
+
+	rule, _ := svc.GetRule(ctx, id)
+	if rule.NextChargeDate != "2026-08-15" {
+		t.Errorf("rule's next charge date = %s, want the Pending Charge's date 2026-08-15", rule.NextChargeDate)
+	}
+	if !rule.Enabled {
+		t.Error("rule disabled itself with no end date to reach")
+	}
+}
+
+// TestGenerateCharges_IsIdempotentForTheSameDate is the property the background
+// goroutine's whole safety rests on: it will call this repeatedly, at startup and
+// on a ticker, and nothing may accumulate.
+func TestGenerateCharges_IsIdempotentForTheSameDate(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	if _, err := svc.CreateRule(ctx, generatingRule()); err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	if _, err := svc.GenerateCharges(ctx, "2026-07-31"); err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+
+	for run := 2; run <= 4; run++ {
+		minted, err := svc.GenerateCharges(ctx, "2026-07-31")
+		if err != nil {
+			t.Fatalf("GenerateCharges run %d: %v", run, err)
+		}
+		if minted != 0 {
+			t.Errorf("run %d minted %d charges, want 0 — the same date was already generated", run, minted)
+		}
+		assertDates(t, svc, "2026-08-15")
+	}
+}
+
+// TestGenerateCharges_CatchesUpOnEveryMissedCharge is the spec's named case: a
+// monthly rule last generated in January, run with an April date, backfills all
+// four charges that came due on their own true dates and leaves exactly one
+// pending.
+func TestGenerateCharges_CatchesUpOnEveryMissedCharge(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	r := generatingRule()
+	r.NextChargeDate = "2026-01-15"
+	id, err := svc.CreateRule(ctx, r)
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+
+	minted, err := svc.GenerateCharges(ctx, "2026-04-20")
+	if err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	// Four backfilled (Jan–Apr) plus the one now pending: every expense created.
+	if minted != 5 {
+		t.Errorf("minted %d charges, want 5 (four backfilled and one pending)", minted)
+	}
+	assertDates(t, svc, "2026-01-15", "2026-02-15", "2026-03-15", "2026-04-15", "2026-05-15")
+
+	expenses, _ := svc.ExpensesInRange(ctx, "2026-04-21", "9999-12-31")
+	if len(expenses) != 1 {
+		t.Errorf("got %d charges after the supplied date, want exactly one pending: %+v", len(expenses), expenses)
+	}
+	rule, _ := svc.GetRule(ctx, id)
+	if rule.NextChargeDate != "2026-05-15" {
+		t.Errorf("rule's next charge date = %s, want it advanced past every backfilled charge to 2026-05-15", rule.NextChargeDate)
+	}
+
+	// And catching up is itself repeatable.
+	minted, err = svc.GenerateCharges(ctx, "2026-04-20")
+	if err != nil {
+		t.Fatalf("second GenerateCharges: %v", err)
+	}
+	if minted != 0 {
+		t.Errorf("re-running catch-up minted %d charges, want 0", minted)
+	}
+}
+
+// TestGenerateCharges_CatchUpKeepsTheAnchor is the anchor canary on the path
+// generation actually walks. A rule anchored on the 31st caught up from January
+// must land on Mar 31, not the Mar 28 an implementation that accumulates onto the
+// clamped February date would produce — and the drift, once started, never stops.
+func TestGenerateCharges_CatchUpKeepsTheAnchor(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	r := generatingRule()
+	r.AnchorDay = 31
+	r.NextChargeDate = "2026-01-31"
+	if _, err := svc.CreateRule(ctx, r); err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+
+	if _, err := svc.GenerateCharges(ctx, "2026-04-20"); err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	assertDates(t, svc, "2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30")
+}
+
+// TestGenerateCharges_EndDateBoundary pins the boundary exactly: the charge
+// falling on the end date is generated, the one after it is not, and the rule
+// comes back disabled rather than needing anyone to switch it off.
+func TestGenerateCharges_EndDateBoundary(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	r := generatingRule()
+	r.NextChargeDate = "2026-07-15"
+	r.EndDate = "2026-08-15"
+	id, err := svc.CreateRule(ctx, r)
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+
+	if _, err := svc.GenerateCharges(ctx, "2026-07-20"); err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	assertDates(t, svc, "2026-07-15", "2026-08-15") // the final charge lands on the end date
+	rule, _ := svc.GetRule(ctx, id)
+	if !rule.Enabled {
+		t.Fatal("the rule disabled itself while it still owed the charge on its end date")
+	}
+
+	// Once that last charge is behind us, the next one would fall past the end
+	// date, so the rule switches itself off instead of scheduling it.
+	minted, err := svc.GenerateCharges(ctx, "2026-08-20")
+	if err != nil {
+		t.Fatalf("GenerateCharges past the end date: %v", err)
+	}
+	if minted != 0 {
+		t.Errorf("minted %d charges past the end date, want 0", minted)
+	}
+	assertDates(t, svc, "2026-07-15", "2026-08-15")
+	rule, _ = svc.GetRule(ctx, id)
+	if rule.Enabled {
+		t.Error("the rule stayed enabled with its end date behind it")
+	}
+
+	// A finished rule stays finished, however often generation runs.
+	if _, err := svc.GenerateCharges(ctx, "2027-01-01"); err != nil {
+		t.Fatalf("GenerateCharges long past the end date: %v", err)
+	}
+	assertDates(t, svc, "2026-07-15", "2026-08-15")
+}
+
+// TestGenerateCharges_DisabledRuleGeneratesNothing — the clock stops. No pending
+// charge, no catch-up for the months it sat disabled, not even a date advance,
+// which is what keeps re-enabling from dumping a paused stretch into the ledger.
+func TestGenerateCharges_DisabledRuleGeneratesNothing(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	r := generatingRule()
+	r.NextChargeDate = "2026-01-15"
+	r.Enabled = false
+	id, err := svc.CreateRule(ctx, r)
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+
+	minted, err := svc.GenerateCharges(ctx, "2026-04-20")
+	if err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	if minted != 0 {
+		t.Errorf("a disabled rule minted %d charges, want 0", minted)
+	}
+	assertDates(t, svc)
+
+	rule, _ := svc.GetRule(ctx, id)
+	if rule.NextChargeDate != "2026-01-15" {
+		t.Errorf("a disabled rule's next charge date moved to %s, want it left at 2026-01-15", rule.NextChargeDate)
+	}
+	if rule.Enabled {
+		t.Error("generation re-enabled a disabled rule")
+	}
+}
+
+// TestGenerateCharges_CountsEveryRulesCharges: the count the goroutine reports
+// spans all the rules, and one rule's pause does not stop another's schedule.
+func TestGenerateCharges_CountsEveryRulesCharges(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	behind := generatingRule()
+	behind.Name = "Rent"
+	behind.NextChargeDate = "2026-06-15"
+	if _, err := svc.CreateRule(ctx, behind); err != nil {
+		t.Fatalf("CreateRule(Rent): %v", err)
+	}
+	ahead := generatingRule()
+	ahead.Name = "Gym"
+	if _, err := svc.CreateRule(ctx, ahead); err != nil {
+		t.Fatalf("CreateRule(Gym): %v", err)
+	}
+	paused := generatingRule()
+	paused.Name = "Spotify"
+	paused.Enabled = false
+	if _, err := svc.CreateRule(ctx, paused); err != nil {
+		t.Fatalf("CreateRule(Spotify): %v", err)
+	}
+
+	minted, err := svc.GenerateCharges(ctx, "2026-07-31")
+	if err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	// Rent: June and July behind us, August pending. Gym: August pending.
+	if minted != 4 {
+		t.Errorf("minted %d charges across the rules, want 4", minted)
+	}
+	assertDates(t, svc, "2026-06-15", "2026-07-15", "2026-08-15", "2026-08-15")
+}
+
+func TestGenerateCharges_InvalidDate(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	if _, err := svc.GenerateCharges(context.Background(), "today"); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("got %v, want %v", err, ErrInvalidDate)
 	}
 }
 

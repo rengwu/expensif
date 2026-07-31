@@ -66,6 +66,28 @@ func (r *sqliteRepo) CreateExpense(ctx context.Context, e domain.Expense) (int64
 	return res.LastInsertId()
 }
 
+// MintCharge inserts a rule's charge, letting the partial unique index on
+// (recurring_rule_id, date) decide whether it is new. A date the rule has
+// already charged conflicts and the insert does nothing, so a repeated
+// generation run neither duplicates the charge nor overwrites one a human has
+// since edited; the boolean is how the caller counts what it actually minted.
+func (r *sqliteRepo) MintCharge(ctx context.Context, e domain.Expense) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+		INSERT INTO expenses (amount, category, description, date, currency, paid_by, recurring_rule_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (recurring_rule_id, date) WHERE recurring_rule_id IS NOT NULL DO NOTHING`,
+		e.Amount, e.Category, e.Description, e.Date, e.Currency, nullableID(e.PaidByID), nullableID(e.RecurringRuleID),
+	)
+	if err != nil {
+		return false, fmt.Errorf("mint charge: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 func (r *sqliteRepo) ListExpenses(ctx context.Context, limit int) ([]domain.Expense, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+expenseColumns+`

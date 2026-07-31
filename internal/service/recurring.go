@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -167,4 +168,117 @@ func (s *Service) UpdateRule(ctx context.Context, rule domain.RecurringRule) err
 // its past expenses and clears its Pending Charge is a later concern.
 func (s *Service) DeleteRule(ctx context.Context, id int64) error {
 	return s.rules.DeleteRule(ctx, id)
+}
+
+// --- Generation ---
+
+// GenerateCharges mints the expenses every enabled rule owes as of `today`, and
+// returns how many it created. `today` is the current date in the user's
+// configured Timezone and is always an argument, never a clock read: charge
+// dates are Timezone-sensitive, the Timezone lives in Preferences, and only the
+// caller knows what "today" means there.
+//
+// Afterwards each enabled rule has exactly one charge dated after `today` — its
+// Pending Charge — and every charge it missed while the app was down exists on
+// its own true date. Calling it again with the same date creates nothing, so the
+// background goroutine may call it as often as it likes.
+//
+// A rule whose schedule or stored date is unusable is reported rather than
+// silently skipped, but it never holds up the others: every rule is attempted
+// and the first error is returned alongside the count of what was minted.
+func (s *Service) GenerateCharges(ctx context.Context, today string) (int, error) {
+	if _, err := time.Parse("2006-01-02", today); err != nil {
+		return 0, ErrInvalidDate
+	}
+	rules, err := s.rules.ListRules(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	minted := 0
+	var firstErr error
+	for _, rule := range rules {
+		// A disabled rule's clock is stopped: no charge, no catch-up, not even a
+		// date advance. Resuming one is the Recurring page's business, not this
+		// function's.
+		if !rule.Enabled {
+			continue
+		}
+		n, err := s.generateForRule(ctx, rule, today)
+		minted += n
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("recurring rule %d (%s): %w", rule.ID, rule.Name, err)
+		}
+	}
+	return minted, firstErr
+}
+
+// generateForRule walks one rule forward from its stored next charge date,
+// minting each charge on its own true date until it has laid down the one that
+// falls after `today` — the Pending Charge — and then stops. Catch-up is not a
+// separate mode: a rule that last charged in January simply takes several turns
+// of this loop before it reaches a future date.
+//
+// The walk advances by recomputing from the anchor (see nextCharge), never by
+// accumulating onto a clamped date, so a rule anchored on the 31st caught up
+// across February lands on Mar 31 rather than drifting to Mar 28.
+func (s *Service) generateForRule(ctx context.Context, rule domain.RecurringRule, today string) (int, error) {
+	if err := validateSchedule(rule); err != nil {
+		return 0, err
+	}
+	date, err := time.Parse("2006-01-02", rule.NextChargeDate)
+	if err != nil {
+		return 0, ErrInvalidDate
+	}
+
+	// The rule as it is stored, so it is only written back when the walk actually
+	// moved it — a rule already one charge ahead is left completely untouched.
+	stored := rule
+	minted := 0
+	for {
+		// Past its end date the rule stops scheduling and switches itself off. A
+		// charge falling exactly *on* the end date is still owed, so only a date
+		// strictly after it ends the rule.
+		if rule.EndDate != "" && rule.NextChargeDate > rule.EndDate {
+			rule.Enabled = false
+			break
+		}
+		created, err := s.expenses.MintCharge(ctx, chargeFor(rule))
+		if err != nil {
+			// Leave the rule where it stands: the dates already minted conflict
+			// harmlessly on the next run, which then carries on from here.
+			return minted, err
+		}
+		if created {
+			minted++
+		}
+		if rule.NextChargeDate > today {
+			break // that was the Pending Charge; one ahead is the whole horizon
+		}
+		date = nextCharge(date, rule)
+		rule.NextChargeDate = date.Format("2006-01-02")
+	}
+
+	if rule != stored {
+		if err := s.rules.UpdateRule(ctx, rule); err != nil {
+			return minted, err
+		}
+	}
+	return minted, nil
+}
+
+// chargeFor is the expense a rule mints for its current charge date: an ordinary
+// one carrying the rule's amount, currency, category and payer, with the rule's
+// Name as the Description. The rule reference is the only thing marking it as
+// minted, which is why every existing view reads it without knowing rules exist.
+func chargeFor(rule domain.RecurringRule) domain.Expense {
+	return domain.Expense{
+		Amount:          rule.Amount,
+		Category:        rule.Category,
+		Description:     rule.Name,
+		Date:            rule.NextChargeDate,
+		Currency:        rule.Currency,
+		PaidByID:        rule.PaidByID,
+		RecurringRuleID: rule.ID,
+	}
 }

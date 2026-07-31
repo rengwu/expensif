@@ -90,6 +90,57 @@ func TestHandleDaily_TimelineAndSingleDayShareDayEntryPartial(t *testing.T) {
 	}
 }
 
+// TestHandleDaily_PendingChargeIsIndistinguishableFromAHandEnteredExpense checks
+// the claim the whole design rests on rather than assuming it: a Pending Charge
+// is an ordinary future-dated expense, so the Ledger needs no idea that rules
+// exist. The page is rendered twice over identical data — once with the rule
+// reference set, once without — and the two responses must be byte-identical.
+// The rule reference is the only difference between the two, so any byte that
+// differed would be the Ledger having learned a new concept.
+func TestHandleDaily_PendingChargeIsIndistinguishableFromAHandEnteredExpense(t *testing.T) {
+	render := func(ruleID int64) string {
+		t.Helper()
+		repo := newMockRepo()
+		repo.prefs = domain.Preferences{Currency: "USD", Timezone: "UTC"}
+		// A past expense so the timeline renders, and a future one that is the
+		// Pending Charge in every run but the control.
+		repo.CreateExpense(t.Context(), domain.Expense{Amount: 5, Category: "food", Description: "x", Date: "2026-07-05", Currency: "USD"})
+		repo.CreateExpense(t.Context(), domain.Expense{
+			Amount: 15.99, Category: "subscriptions", Description: "Netflix",
+			Date: "2026-07-20", Currency: "USD", RecurringRuleID: ruleID,
+		})
+
+		svc := service.New(repository.Repos{
+			Expenses:    repo,
+			Users:       repo,
+			Preferences: repo,
+			Rates:       repo,
+			Rules:       repo,
+		}, &mockRateClient{})
+
+		renderer, err := NewRenderer("../../templates", false, nil)
+		if err != nil {
+			t.Fatalf("renderer init failed: %v", err)
+		}
+		h := NewHTMLHandler(svc, renderer)
+		h.now = func() time.Time { return time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC) }
+		return getBody(t, h.HandleDaily, "/")
+	}
+
+	minted, handEntered := render(7), render(0)
+	// Upcoming is where the forward visibility lives, and it is the section the
+	// spec says a Pending Charge finally fills.
+	if !strings.Contains(minted, `data-day="2026-07-20"`) {
+		t.Fatal("the Pending Charge's day never reached the Ledger's Upcoming section")
+	}
+	if !strings.Contains(minted, "Netflix") {
+		t.Fatal("the Pending Charge's description never rendered")
+	}
+	if minted != handEntered {
+		t.Error("the Ledger renders a Pending Charge differently from a hand-entered expense")
+	}
+}
+
 // dailyFixture builds a handler over a real renderer with the clock frozen at
 // 2026-07-13, so the first window is [2026-06-14, 2026-07-13].
 func dailyFixture(t *testing.T, dates ...string) *HTMLHandler {
