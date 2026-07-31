@@ -1,6 +1,8 @@
 ---
 type: task
 blocked_by: [02]
+claimed_by: sb4c38ea7dc23
+claimed_at: 2026-07-31T14:44:22Z
 ---
 
 # What a rule owns: edit, delete, disable and re-enable
