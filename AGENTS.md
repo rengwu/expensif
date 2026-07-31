@@ -34,7 +34,7 @@ Tests live beside the code they cover (`internal/web/handlers_api_test.go`, `ui/
 - `.plan/<slug>/map.md` + `.plan/<slug>/tickets/NN-<slug>.md` — wayfinder maps for large efforts.
 - `.plan/handoffs/<YYYY-MM-DD>-<slug>.md` — session handoffs, so a fresh agent can pick up work.
 
-Current contents: `.plan/expensif/` (project spec, brief, testing strategy), `.plan/react-islands/spec.md` (migration spec), `.plan/daily-timeline/` + `.plan/daily-timeline-impl/` (daily view redesign), `.plan/export-csv/` + `.plan/export-csv-impl/` (CSV export), `.plan/handoffs/` (session history). An effort is planned on a `<slug>` map and executed on a matching `<slug>-impl` one.
+Current contents: `.plan/expensif/` (project spec, brief, testing strategy), `.plan/react-islands/spec.md` (migration spec), `.plan/daily-timeline/` + `.plan/daily-timeline-impl/` (daily view redesign), `.plan/export-csv/` + `.plan/export-csv-impl/` (CSV export), `.plan/recurring-expenses/` + `.plan/recurring-expenses-impl/` (recurring expenses), `.plan/handoffs/` (session history). An effort is planned on a `<slug>` map — or, where a grilling session settles every decision outright, a `<slug>/spec.md` with no map at all — and executed on a matching `<slug>-impl` one.
 
 How far along a map is, and which ticket is ready to claim, is derived from its tickets — never restated here, where it would drift. Read the map's `map.md` and scan its `tickets/`.
 
