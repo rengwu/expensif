@@ -1,6 +1,8 @@
 ---
 type: task
 blocked_by: []
+claimed_by: sefb73a827842
+claimed_at: 2026-07-31T11:48:16Z
 ---
 
 # The rule, its store, and the anchor arithmetic
