@@ -50,6 +50,16 @@ database whose clock you can reason about. The wayfinder linter for this map:
 
 <!-- one line per resolved ticket: gist + link. Empty until the first ticket resolves. -->
 
+- **The Rule is stored and the anchor arithmetic is right.** `domain.RecurringRule` +
+  `recurring_rules` + a nullable `recurring_rule_id` on expenses, with a *partial* unique index
+  on `(recurring_rule_id, date)`; the schedule is `Service.NextChargeDate(rule, after)`, which
+  takes the month from the date it advances from and the day from the stored anchor, so Jan 31 →
+  Feb 28 → **Mar 31**. Verified red against a drifting implementation first. Three things later
+  tickets inherit: the rule API takes a `domain.RecurringRule` value rather than flat arguments;
+  the payer is **not** defaulted in the service, so ticket 04's form handler must pre-select it
+  the way `HandleAdd` does; and `Enabled` is never defaulted, so that form must send it.
+  — [01](./tickets/01-rule-store-and-anchor-arithmetic.md)
+
 ## Not yet specified
 
 <!-- Empty. Every decision is settled in the spec; this map only executes it. Nothing is

@@ -65,3 +65,79 @@ either.
 **Done when:** a Rule can be created, read back and listed through the service; the anchor
 series above passes; the migration is proven against a populated database; and the uniqueness
 constraint is proven to reject duplicates.
+
+## Answer
+
+Built, in `internal/domain/models.go`, `internal/db/db.go`, `internal/repository/` and
+`internal/service/recurring.go`:
+
+- **`domain.RecurringRule`** with every field the spec names, plus `domain.IntervalUnit`
+  (`months` | `weeks` | `days`). No description field — the Name is the Description of what the
+  Rule mints. `domain.Expense` gains `RecurringRuleID`, which is the *only* thing that
+  distinguishes a minted Expense from a hand-entered one.
+- **The migration**, appended to `Migrate` in the existing additive style: a `recurring_rules`
+  table, `ALTER TABLE expenses ADD COLUMN recurring_rule_id` behind the same
+  `pragma_table_info` check the other columns use, and the uniqueness constraint as a
+  **partial** unique index on `(recurring_rule_id, date) WHERE recurring_rule_id IS NOT NULL`.
+  Partial because SQLite treats NULLs as distinct anyway, and stating it makes the intent
+  explicit: rules cannot double-charge a date, hand-entered Expenses are untouched (two coffees
+  on one day stay legal). Also an index on `(enabled, next_charge_date)`, which is the cheap
+  "which Rules are due" query the spec says `next_charge_date` is persisted for.
+- **Repository CRUD** (`RecurringRuleRepository`, added to the `Repository` composition and to
+  `Repos`) with a service passthrough. `DeleteRule` is the plain delete; the transactional one
+  is ticket 03's.
+- **The anchor arithmetic**, `nextCharge` in `internal/service/recurring.go`, observed through
+  `Service.NextChargeDate(rule, after)`. For months it takes only the *month* from the date it
+  advances from and the *day* from the stored anchor, clamped to that month's length. Weeks and
+  days are plain day multiples.
+
+**Done-when, clause by clause.** A Rule is created, read back and listed through the service
+(`TestCreateRule_RoundTripsThroughGetAndList`, plus the CRUD round-trip over real SQL). The
+anchor series passes (`TestNextChargeDate_AnchorSeriesNeverDrifts`, feeding each result back in
+as the next input, which is the path generation will take). The migration is proven against a
+populated database (`TestMigrateOverPopulatedDatabase` builds the pre-effort schema, seeds three
+expenses, migrates, and asserts all three survive with the recorded total intact and no rule
+reference; it also re-migrates to prove idempotence). The uniqueness constraint is proven to
+reject duplicates (`TestRuleDateUniquenessRejectsDuplicates`), including the three cases that
+must still be allowed: the same rule on another date, another rule on the same date, and
+unlinked Expenses repeating a date.
+
+**The leading red was verified, not assumed.** Before writing the real arithmetic I ran the
+series test against a deliberately drifting implementation (anchor taken from the previous
+date's day) and watched it fail with exactly the predicted `2026-03-28`. The canary bites.
+
+Also checked live: the migration ran against a *copy* of the real dev database (13 expenses),
+the server booted and served 200, and every table and index arrived. The dev database itself was
+never opened — per the map's warning, only the copy under a scratch `DATA_DIR`.
+
+**Decisions I had to make, for a human to overrule if they're wrong:**
+
+1. **The service's rule API takes a `domain.RecurringRule`, not flat arguments.** `CreateExpense`'s
+   precedent is flat parameters, but a Rule has eleven fields and eleven positional arguments is
+   a bug factory. Validation still mirrors `validateExpenseInput`'s shape.
+2. **Currency defaults from Preferences; the payer deliberately does not.** The spec says both
+   default "the way the add form already defaults them" — and the add form defaults the payer in
+   its *handler*, by pre-selecting `prefs.UserID` in the form (`HandleAdd`), not in the service.
+   Defaulting it in the service would make "no payer" inexpressible, since an unset payer and a
+   cleared one are both 0. **Ticket 04 must pre-select the default payer in the Recurring form's
+   handler**, the way `HandleAdd` does, or that spec line goes unimplemented.
+3. **An unset anchor day defaults to the start date's day-of-month**, so a form asking only
+   "when does it first charge?" is sufficient. An anchor outside 1–31 is rejected.
+4. **An end date before the first charge is rejected** (reusing `ErrInvalidRange`); an end date
+   *equal* to it is allowed, being the degenerate one-charge Rule. The spec only says what
+   happens when a *computed* date passes the end date, so this is a validation call, not a
+   scheduling one.
+5. **`Enabled` is not defaulted on create** — the caller states it. A zero-valued struct
+   therefore creates a *disabled* Rule that generates nothing; ticket 04's form must send the
+   checkbox state explicitly.
+
+**Deliberately left out:** generation (02), the transactional delete and re-enable semantics
+(03), the page and Monthly Equivalent (04), and any handler or template. `UpdateExpense` still
+does not write `recurring_rule_id`, which is what lets a Pending Charge be edited as an ordinary
+Expense without severing it from its Rule — noted here because ticket 03 depends on it.
+
+One cleanup beyond the strict ticket, flagged for transparency: the expense column list and row
+scan were repeated at three sites in `sqlite.go`, and adding the rule reference meant editing all
+three. I extracted them into one `expenseColumns` + `scanExpense` pair (mirroring the
+`ruleColumns` + `scanRule` I was writing anyway), so the next column lands once. Pure refactor,
+covered by the existing repository and handler tests.
