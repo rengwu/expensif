@@ -20,6 +20,13 @@ var (
 	ErrInvalidDate        = errors.New("Date must be a valid YYYY-MM-DD")
 	ErrInvalidRange       = errors.New("Start date must not be after end date")
 	ErrNoRates            = errors.New("No exchange rates available")
+
+	// Recurring rules. A rule's name is the Description of the expenses it
+	// mints, so it has a name where an expense has a description.
+	ErrMissingName          = errors.New("Name is required")
+	ErrInvalidIntervalUnit  = errors.New("Interval must be months, weeks or days")
+	ErrInvalidIntervalCount = errors.New("Interval count must be at least 1")
+	ErrInvalidAnchorDay     = errors.New("Anchor day must be between 1 and 31")
 )
 
 type RateFetcher interface {
@@ -32,6 +39,7 @@ type Service struct {
 	users      repository.UserRepository
 	prefs      repository.PreferenceRepository
 	rates      repository.RateRepository
+	rules      repository.RecurringRuleRepository
 	rateClient RateFetcher
 }
 
@@ -41,6 +49,7 @@ func New(repos repository.Repos, rateClient RateFetcher) *Service {
 		users:      repos.Users,
 		prefs:      repos.Preferences,
 		rates:      repos.Rates,
+		rules:      repos.Rules,
 		rateClient: rateClient,
 	}
 }

@@ -18,14 +18,47 @@ func NewSQLite(db *sql.DB) Repository {
 	return &sqliteRepo{db: db}
 }
 
-func (r *sqliteRepo) CreateExpense(ctx context.Context, e domain.Expense) (int64, error) {
-	var paidBy interface{}
-	if e.PaidByID != 0 {
-		paidBy = e.PaidByID
+// nullableID maps an unset (zero) foreign key to SQL NULL, so "no payer" and "no
+// rule" are stored as absence rather than as a reference to row 0.
+func nullableID(id int64) interface{} {
+	if id == 0 {
+		return nil
 	}
+	return id
+}
+
+// expenseColumns is the one column list every expense read shares, so an expense
+// scanned by GetExpense and one scanned by ListExpenses are populated
+// identically — and a column added to the table is added here once.
+const expenseColumns = `e.id, e.amount, e.category, e.description, e.date, e.currency, e.paid_by, u.name, e.recurring_rule_id, e.created_at`
+
+// scanExpense reads one expense row in expenseColumns order.
+func scanExpense(scan func(dest ...any) error) (domain.Expense, error) {
+	var e domain.Expense
+	var paidBy, ruleID sql.NullInt64
+	var paidByName sql.NullString
+	var createdAt string
+	if err := scan(&e.ID, &e.Amount, &e.Category, &e.Description, &e.Date, &e.Currency,
+		&paidBy, &paidByName, &ruleID, &createdAt); err != nil {
+		return domain.Expense{}, err
+	}
+	if paidBy.Valid {
+		e.PaidByID = paidBy.Int64
+	}
+	if paidByName.Valid {
+		e.PaidByName = paidByName.String
+	}
+	if ruleID.Valid {
+		e.RecurringRuleID = ruleID.Int64
+	}
+	e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	return e, nil
+}
+
+func (r *sqliteRepo) CreateExpense(ctx context.Context, e domain.Expense) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO expenses (amount, category, description, date, currency, paid_by) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.Amount, e.Category, e.Description, e.Date, e.Currency, paidBy,
+		`INSERT INTO expenses (amount, category, description, date, currency, paid_by, recurring_rule_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.Amount, e.Category, e.Description, e.Date, e.Currency, nullableID(e.PaidByID), nullableID(e.RecurringRuleID),
 	)
 	if err != nil {
 		return 0, err
@@ -35,7 +68,7 @@ func (r *sqliteRepo) CreateExpense(ctx context.Context, e domain.Expense) (int64
 
 func (r *sqliteRepo) ListExpenses(ctx context.Context, limit int) ([]domain.Expense, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT e.id, e.amount, e.category, e.description, e.date, e.currency, e.paid_by, u.name, e.created_at
+		`SELECT `+expenseColumns+`
 		 FROM expenses e
 		 LEFT JOIN users u ON e.paid_by = u.id
 		 ORDER BY e.date DESC, e.created_at DESC LIMIT ?`,
@@ -48,20 +81,10 @@ func (r *sqliteRepo) ListExpenses(ctx context.Context, limit int) ([]domain.Expe
 
 	var expenses []domain.Expense
 	for rows.Next() {
-		var e domain.Expense
-		var createdAt string
-		var paidBy sql.NullInt64
-		var paidByName sql.NullString
-		if err := rows.Scan(&e.ID, &e.Amount, &e.Category, &e.Description, &e.Date, &e.Currency, &paidBy, &paidByName, &createdAt); err != nil {
+		e, err := scanExpense(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		if paidBy.Valid {
-			e.PaidByID = paidBy.Int64
-		}
-		if paidByName.Valid {
-			e.PaidByName = paidByName.String
-		}
-		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		expenses = append(expenses, e)
 	}
 	return expenses, rows.Err()
@@ -112,7 +135,7 @@ func (r *sqliteRepo) SampleMatching(ctx context.Context, f domain.ExpenseFilter,
 // prefix of the full download.
 func (r *sqliteRepo) queryExpenses(ctx context.Context, f domain.ExpenseFilter, limit int) ([]domain.Expense, error) {
 	where, args := filterWhere(f)
-	query := `SELECT e.id, e.amount, e.category, e.description, e.date, e.currency, e.paid_by, u.name, e.created_at
+	query := `SELECT ` + expenseColumns + `
 		 FROM expenses e
 		 LEFT JOIN users u ON e.paid_by = u.id
 		 WHERE ` + where + `
@@ -129,20 +152,10 @@ func (r *sqliteRepo) queryExpenses(ctx context.Context, f domain.ExpenseFilter, 
 
 	var expenses []domain.Expense
 	for rows.Next() {
-		var e domain.Expense
-		var createdAt string
-		var paidBy sql.NullInt64
-		var paidByName sql.NullString
-		if err := rows.Scan(&e.ID, &e.Amount, &e.Category, &e.Description, &e.Date, &e.Currency, &paidBy, &paidByName, &createdAt); err != nil {
+		e, err := scanExpense(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		if paidBy.Valid {
-			e.PaidByID = paidBy.Int64
-		}
-		if paidByName.Valid {
-			e.PaidByName = paidByName.String
-		}
-		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		expenses = append(expenses, e)
 	}
 	return expenses, rows.Err()
@@ -183,40 +196,28 @@ func (r *sqliteRepo) DistinctCategories(ctx context.Context) ([]string, error) {
 }
 
 func (r *sqliteRepo) GetExpense(ctx context.Context, id int64) (*domain.Expense, error) {
-	var e domain.Expense
-	var createdAt string
-	var paidBy sql.NullInt64
-	var paidByName sql.NullString
-	err := r.db.QueryRowContext(ctx,
-		`SELECT e.id, e.amount, e.category, e.description, e.date, e.currency, e.paid_by, u.name, e.created_at
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+expenseColumns+`
 		 FROM expenses e
 		 LEFT JOIN users u ON e.paid_by = u.id
-		 WHERE e.id = ?`, id,
-	).Scan(&e.ID, &e.Amount, &e.Category, &e.Description, &e.Date, &e.Currency, &paidBy, &paidByName, &createdAt)
+		 WHERE e.id = ?`, id)
+	e, err := scanExpense(row.Scan)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("no expense with id %d", id)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if paidBy.Valid {
-		e.PaidByID = paidBy.Int64
-	}
-	if paidByName.Valid {
-		e.PaidByName = paidByName.String
-	}
-	e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 	return &e, nil
 }
 
+// UpdateExpense writes the fields a human can edit. recurring_rule_id is
+// deliberately not among them: editing a Pending Charge as an ordinary expense
+// must not sever it from the rule that minted it.
 func (r *sqliteRepo) UpdateExpense(ctx context.Context, e domain.Expense) error {
-	var paidBy interface{}
-	if e.PaidByID != 0 {
-		paidBy = e.PaidByID
-	}
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE expenses SET amount = ?, category = ?, description = ?, date = ?, currency = ?, paid_by = ? WHERE id = ?`,
-		e.Amount, e.Category, e.Description, e.Date, e.Currency, paidBy, e.ID,
+		e.Amount, e.Category, e.Description, e.Date, e.Currency, nullableID(e.PaidByID), e.ID,
 	)
 	if err != nil {
 		return err
@@ -445,6 +446,144 @@ func (r *sqliteRepo) DeleteUser(ctx context.Context, id int64) error {
 	}
 
 	return tx.Commit()
+}
+
+// --- Recurring Rules ---
+
+// ruleColumns is the one column list every rule read shares, so a rule scanned
+// by GetRule and one scanned by ListRules are populated identically. The payer's
+// name rides the same LEFT JOIN the expense reads use.
+const ruleColumns = `r.id, r.name, r.amount, r.currency, r.category, r.paid_by, u.name,
+	r.interval_unit, r.interval_count, r.anchor_day, r.next_charge_date, r.end_date, r.enabled, r.created_at`
+
+// scanRule reads one rule row in ruleColumns order.
+func scanRule(scan func(dest ...any) error) (domain.RecurringRule, error) {
+	var r domain.RecurringRule
+	var paidBy sql.NullInt64
+	var paidByName, endDate sql.NullString
+	var createdAt string
+	err := scan(&r.ID, &r.Name, &r.Amount, &r.Currency, &r.Category, &paidBy, &paidByName,
+		&r.IntervalUnit, &r.IntervalCount, &r.AnchorDay, &r.NextChargeDate, &endDate, &r.Enabled, &createdAt)
+	if err != nil {
+		return domain.RecurringRule{}, err
+	}
+	if paidBy.Valid {
+		r.PaidByID = paidBy.Int64
+	}
+	if paidByName.Valid {
+		r.PaidByName = paidByName.String
+	}
+	if endDate.Valid {
+		r.EndDate = endDate.String
+	}
+	r.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	return r, nil
+}
+
+func (r *sqliteRepo) CreateRule(ctx context.Context, rule domain.RecurringRule) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+		INSERT INTO recurring_rules
+			(name, amount, currency, category, paid_by, interval_unit, interval_count, anchor_day, next_charge_date, end_date, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rule.Name, rule.Amount, rule.Currency, rule.Category, nullableID(rule.PaidByID),
+		string(rule.IntervalUnit), rule.IntervalCount, rule.AnchorDay, rule.NextChargeDate,
+		nullableDate(rule.EndDate), rule.Enabled,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("create recurring rule: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// nullableDate maps an unset optional date to SQL NULL, so an open-ended rule
+// stores absence rather than an empty string.
+func nullableDate(date string) interface{} {
+	if date == "" {
+		return nil
+	}
+	return date
+}
+
+func (r *sqliteRepo) GetRule(ctx context.Context, id int64) (*domain.RecurringRule, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT `+ruleColumns+`
+		FROM recurring_rules r
+		LEFT JOIN users u ON r.paid_by = u.id
+		WHERE r.id = ?`, id)
+	rule, err := scanRule(row.Scan)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("no recurring rule with id %d", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
+// ListRules returns every rule, enabled or not, soonest charge first — the order
+// the Recurring page reads in — with ties broken by name so the list is stable.
+func (r *sqliteRepo) ListRules(ctx context.Context) ([]domain.RecurringRule, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+ruleColumns+`
+		FROM recurring_rules r
+		LEFT JOIN users u ON r.paid_by = u.id
+		ORDER BY r.next_charge_date ASC, r.name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []domain.RecurringRule
+	for rows.Next() {
+		rule, err := scanRule(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, rows.Err()
+}
+
+func (r *sqliteRepo) UpdateRule(ctx context.Context, rule domain.RecurringRule) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE recurring_rules SET
+			name = ?, amount = ?, currency = ?, category = ?, paid_by = ?,
+			interval_unit = ?, interval_count = ?, anchor_day = ?,
+			next_charge_date = ?, end_date = ?, enabled = ?
+		WHERE id = ?`,
+		rule.Name, rule.Amount, rule.Currency, rule.Category, nullableID(rule.PaidByID),
+		string(rule.IntervalUnit), rule.IntervalCount, rule.AnchorDay, rule.NextChargeDate,
+		nullableDate(rule.EndDate), rule.Enabled, rule.ID,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("no recurring rule with id %d", rule.ID)
+	}
+	return nil
+}
+
+// DeleteRule drops the rule alone. Clearing the reference on the expenses it
+// already minted, and removing its Pending Charge, is a separate transactional
+// concern the ownership work owns.
+func (r *sqliteRepo) DeleteRule(ctx context.Context, id int64) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM recurring_rules WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("no recurring rule with id %d", id)
+	}
+	return nil
 }
 
 // --- Exchange Rates ---

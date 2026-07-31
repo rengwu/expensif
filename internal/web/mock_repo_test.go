@@ -23,6 +23,8 @@ type mockRepo struct {
 	rates      map[string]map[string]map[string]float64 // base -> date -> target -> rate
 	users      map[int64]string
 	nextUserID int64
+	rules      map[int64]domain.RecurringRule
+	nextRuleID int64
 }
 
 func newMockRepo() *mockRepo {
@@ -33,6 +35,8 @@ func newMockRepo() *mockRepo {
 		rates:      make(map[string]map[string]map[string]float64),
 		users:      make(map[int64]string),
 		nextUserID: 1,
+		rules:      make(map[int64]domain.RecurringRule),
+		nextRuleID: 1,
 	}
 }
 
@@ -429,6 +433,61 @@ func (r *mockRepo) DeleteUser(_ context.Context, id int64) error {
 	return nil
 }
 
+func (r *mockRepo) CreateRule(_ context.Context, rule domain.RecurringRule) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rule.ID = r.nextRuleID
+	r.nextRuleID++
+	r.rules[rule.ID] = rule
+	return rule.ID, nil
+}
+
+func (r *mockRepo) GetRule(_ context.Context, id int64) (*domain.RecurringRule, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	rule, ok := r.rules[id]
+	if !ok {
+		return nil, fmt.Errorf("no recurring rule with id %d", id)
+	}
+	return &rule, nil
+}
+
+func (r *mockRepo) ListRules(_ context.Context) ([]domain.RecurringRule, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var rules []domain.RecurringRule
+	for _, rule := range r.rules {
+		rules = append(rules, rule)
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].NextChargeDate != rules[j].NextChargeDate {
+			return rules[i].NextChargeDate < rules[j].NextChargeDate
+		}
+		return rules[i].Name < rules[j].Name
+	})
+	return rules, nil
+}
+
+func (r *mockRepo) UpdateRule(_ context.Context, rule domain.RecurringRule) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.rules[rule.ID]; !ok {
+		return fmt.Errorf("no recurring rule with id %d", rule.ID)
+	}
+	r.rules[rule.ID] = rule
+	return nil
+}
+
+func (r *mockRepo) DeleteRule(_ context.Context, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.rules[id]; !ok {
+		return fmt.Errorf("no recurring rule with id %d", id)
+	}
+	delete(r.rules, id)
+	return nil
+}
+
 // seed adds a few expenses for testing convenience.
 func (r *mockRepo) seed() {
 	now := time.Now().Format("2006-01-02")
@@ -467,4 +526,5 @@ var _ repository.ExpenseRepository = (*mockRepo)(nil)
 var _ repository.UserRepository = (*mockRepo)(nil)
 var _ repository.PreferenceRepository = (*mockRepo)(nil)
 var _ repository.RateRepository = (*mockRepo)(nil)
+var _ repository.RecurringRuleRepository = (*mockRepo)(nil)
 var _ service.RateFetcher = (*mockRateClient)(nil)

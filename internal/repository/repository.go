@@ -60,6 +60,18 @@ type UserRepository interface {
 	DeleteUser(ctx context.Context, id int64) error
 }
 
+// RecurringRuleRepository stores the rules that mint expenses on a schedule.
+// The expenses themselves are ordinary ones and belong to ExpenseRepository —
+// nothing here creates, reads or deletes an expense.
+type RecurringRuleRepository interface {
+	CreateRule(ctx context.Context, r domain.RecurringRule) (int64, error)
+	GetRule(ctx context.Context, id int64) (*domain.RecurringRule, error)
+	// ListRules returns every rule, enabled or not, soonest charge first.
+	ListRules(ctx context.Context) ([]domain.RecurringRule, error)
+	UpdateRule(ctx context.Context, r domain.RecurringRule) error
+	DeleteRule(ctx context.Context, id int64) error
+}
+
 // Repository is the full composition of all domain repositories.
 // Useful when a single concrete implementation (e.g. SQLite) satisfies everything.
 type Repository interface {
@@ -67,6 +79,7 @@ type Repository interface {
 	PreferenceRepository
 	RateRepository
 	UserRepository
+	RecurringRuleRepository
 }
 
 // Repos bundles the focused repository interfaces for dependency injection.
@@ -75,4 +88,5 @@ type Repos struct {
 	Users       UserRepository
 	Preferences PreferenceRepository
 	Rates       RateRepository
+	Rules       RecurringRuleRepository
 }

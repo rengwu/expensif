@@ -172,6 +172,50 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 
+	rulesSchema := `
+	CREATE TABLE IF NOT EXISTS recurring_rules (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		amount REAL NOT NULL,
+		currency TEXT NOT NULL DEFAULT 'USD',
+		category TEXT NOT NULL,
+		paid_by INTEGER,
+		interval_unit TEXT NOT NULL,
+		interval_count INTEGER NOT NULL,
+		anchor_day INTEGER NOT NULL,
+		next_charge_date TEXT NOT NULL,
+		end_date TEXT,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_rules_next_charge ON recurring_rules(enabled, next_charge_date);
+	`
+	if _, err := db.Exec(rulesSchema); err != nil {
+		return err
+	}
+
+	var hasRuleRef int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('expenses') WHERE name = 'recurring_rule_id'`).Scan(&hasRuleRef); err != nil {
+		return err
+	}
+	if hasRuleRef == 0 {
+		if _, err := db.Exec(`ALTER TABLE expenses ADD COLUMN recurring_rule_id INTEGER`); err != nil {
+			return err
+		}
+	}
+
+	// One rule can never legitimately owe two charges on the same date — the
+	// minimum interval is one day — so this makes double-generation impossible
+	// by construction rather than merely unlikely. Partial, so hand-entered
+	// expenses (which carry no rule) stay entirely unconstrained.
+	if _, err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_rule_date
+		ON expenses(recurring_rule_id, date)
+		WHERE recurring_rule_id IS NOT NULL
+	`); err != nil {
+		return err
+	}
+
 	slog.Info("database migrations completed")
 	return nil
 }

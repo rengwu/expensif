@@ -33,6 +33,7 @@ func main() {
 		Users:       repo,
 		Preferences: repo,
 		Rates:       repo,
+		Rules:       repo,
 	}, rate.NewClient())
 
 	ctx, cancel := context.WithCancel(context.Background())
