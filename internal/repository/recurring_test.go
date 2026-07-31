@@ -69,14 +69,73 @@ func TestRuleCRUDRoundTrip(t *testing.T) {
 		t.Errorf("cleared optional fields did not round-trip as empty: %+v", *after)
 	}
 
-	if err := repo.DeleteRule(ctx, id); err != nil {
+	if err := repo.DeleteRule(ctx, id, "2026-07-31"); err != nil {
 		t.Fatalf("DeleteRule: %v", err)
 	}
 	if _, err := repo.GetRule(ctx, id); err == nil {
 		t.Error("GetRule succeeded after DeleteRule")
 	}
-	if err := repo.DeleteRule(ctx, id); err == nil {
+	if err := repo.DeleteRule(ctx, id, "2026-07-31"); err == nil {
 		t.Error("DeleteRule of a missing rule succeeded")
+	}
+}
+
+func TestDeleteRulePreservesHistoryAndRemovesItsPendingCharge(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+	rule := sampleRule()
+	rule.NextChargeDate = "2026-05-15"
+	ruleID, err := repo.CreateRule(ctx, rule)
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+
+	var pastIDs []int64
+	for _, date := range []string{"2026-02-15", "2026-03-15", "2026-04-15", "2026-04-20"} {
+		id, err := repo.CreateExpense(ctx, domain.Expense{
+			Amount: 15.99, Category: "subscriptions", Description: "Netflix",
+			Date: date, Currency: "USD", RecurringRuleID: ruleID,
+		})
+		if err != nil {
+			t.Fatalf("create past charge %s: %v", date, err)
+		}
+		pastIDs = append(pastIDs, id)
+	}
+	pendingID, err := repo.CreateExpense(ctx, domain.Expense{
+		Amount: 15.99, Category: "subscriptions", Description: "Netflix",
+		// A direct ordinary-Expense edit moved this charge away from the Rule's
+		// originally stored 2026-05-15 date; ownership follows the future row.
+		Date: "2026-05-20", Currency: "USD", RecurringRuleID: ruleID,
+	})
+	if err != nil {
+		t.Fatalf("create Pending Charge: %v", err)
+	}
+	unrelatedID, err := repo.CreateExpense(ctx, domain.Expense{
+		Amount: 4, Category: "food", Description: "coffee", Date: "2026-05-15", Currency: "USD",
+	})
+	if err != nil {
+		t.Fatalf("create unrelated Expense: %v", err)
+	}
+
+	if err := repo.DeleteRule(ctx, ruleID, "2026-04-20"); err != nil {
+		t.Fatalf("DeleteRule: %v", err)
+	}
+	if _, err := repo.GetRule(ctx, ruleID); err == nil {
+		t.Error("GetRule succeeded after DeleteRule")
+	}
+	if _, err := repo.GetExpense(ctx, pendingID); err == nil {
+		t.Error("the Pending Charge survived its Rule")
+	}
+	for _, id := range pastIDs {
+		expense, err := repo.GetExpense(ctx, id)
+		if err != nil {
+			t.Fatalf("past Expense %d did not survive: %v", id, err)
+		}
+		if expense.RecurringRuleID != 0 {
+			t.Errorf("past Expense %d kept rule reference %d, want it cleared", id, expense.RecurringRuleID)
+		}
+	}
+	if _, err := repo.GetExpense(ctx, unrelatedID); err != nil {
+		t.Errorf("unrelated Expense was disturbed: %v", err)
 	}
 }
 

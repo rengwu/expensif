@@ -15,6 +15,13 @@ type ExpenseRepository interface {
 	// (rule, date) uniqueness constraint, not the caller's bookkeeping, is what
 	// makes double-charging impossible.
 	MintCharge(ctx context.Context, e domain.Expense) (bool, error)
+	// RewritePendingCharge replaces every user-editable field on the Rule's one
+	// future-dated charge, preserving its identity and CreatedAt. It reports
+	// whether that Pending Charge existed to rewrite.
+	RewritePendingCharge(ctx context.Context, ruleID int64, today string, e domain.Expense) (bool, error)
+	// DeletePendingCharge removes the Rule's one future-dated charge. A charge
+	// due today is already ledger history and must survive.
+	DeletePendingCharge(ctx context.Context, ruleID int64, today string) error
 	ListExpenses(ctx context.Context, limit int) ([]domain.Expense, error)
 	ListExpensesInRange(ctx context.Context, start, end string) ([]domain.Expense, error)
 	ExpensesMatching(ctx context.Context, filter domain.ExpenseFilter) ([]domain.Expense, error)
@@ -68,15 +75,15 @@ type UserRepository interface {
 }
 
 // RecurringRuleRepository stores the rules that mint expenses on a schedule.
-// The expenses themselves are ordinary ones and belong to ExpenseRepository —
-// nothing here creates, reads or deletes an expense.
+// The sole cross-aggregate operation is DeleteRule: preserving history while
+// removing the Pending Charge must be one storage transaction.
 type RecurringRuleRepository interface {
 	CreateRule(ctx context.Context, r domain.RecurringRule) (int64, error)
 	GetRule(ctx context.Context, id int64) (*domain.RecurringRule, error)
 	// ListRules returns every rule, enabled or not, soonest charge first.
 	ListRules(ctx context.Context) ([]domain.RecurringRule, error)
 	UpdateRule(ctx context.Context, r domain.RecurringRule) error
-	DeleteRule(ctx context.Context, id int64) error
+	DeleteRule(ctx context.Context, id int64, today string) error
 }
 
 // Repository is the full composition of all domain repositories.

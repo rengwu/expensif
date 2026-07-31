@@ -39,15 +39,29 @@ func (s *Service) NextChargeDate(rule domain.RecurringRule, after string) (strin
 // Weeks and days need no calendar reasoning at all: they are plain multiples of
 // 24 hours, and having no clamping they have nothing to drift from.
 func nextCharge(from time.Time, rule domain.RecurringRule) time.Time {
+	return stepCharge(from, rule, 1)
+}
+
+// stepCharge is the one interval dispatch for moving a schedule in either
+// direction. Recomputing an edited Pending Charge needs the prior occurrence;
+// keeping both directions here prevents the reverse path from drifting away
+// from the generation arithmetic above.
+func stepCharge(from time.Time, rule domain.RecurringRule, direction int) time.Time {
 	switch rule.IntervalUnit {
 	case domain.IntervalWeeks:
-		return from.AddDate(0, 0, 7*rule.IntervalCount)
+		return from.AddDate(0, 0, direction*7*rule.IntervalCount)
 	case domain.IntervalDays:
-		return from.AddDate(0, 0, rule.IntervalCount)
+		return from.AddDate(0, 0, direction*rule.IntervalCount)
 	default: // domain.IntervalMonths
-		year, month := from.Year(), int(from.Month())+rule.IntervalCount
-		year += (month - 1) / 12
-		month = (month-1)%12 + 1
+		year, month := from.Year(), int(from.Month())+direction*rule.IntervalCount
+		for month > 12 {
+			year++
+			month -= 12
+		}
+		for month < 1 {
+			year--
+			month += 12
+		}
 		return time.Date(year, time.Month(month), clampDay(year, month, rule.AnchorDay), 0, 0, 0, 0, time.UTC)
 	}
 }
@@ -118,14 +132,8 @@ func (s *Service) normalizeRule(ctx context.Context, rule domain.RecurringRule) 
 	}
 
 	if rule.EndDate != "" {
-		end, err := time.Parse("2006-01-02", rule.EndDate)
-		if err != nil {
+		if _, err := time.Parse("2006-01-02", rule.EndDate); err != nil {
 			return rule, ErrInvalidDate
-		}
-		// An end date on the first charge is the degenerate one-charge rule and
-		// is allowed; one before it could never charge at all.
-		if end.Before(next) {
-			return rule, ErrInvalidRange
 		}
 	}
 
@@ -144,6 +152,13 @@ func (s *Service) CreateRule(ctx context.Context, rule domain.RecurringRule) (in
 	if err != nil {
 		return 0, err
 	}
+	// An end date on the first charge is the degenerate one-charge rule and is
+	// allowed; one before it could never charge at all. Edits do not use this
+	// creation-only guard: moving an existing Rule's end before its Pending
+	// Charge disables it below instead.
+	if rule.EndDate != "" && rule.EndDate < rule.NextChargeDate {
+		return 0, ErrInvalidRange
+	}
 	return s.rules.CreateRule(ctx, rule)
 }
 
@@ -156,18 +171,115 @@ func (s *Service) ListRules(ctx context.Context) ([]domain.RecurringRule, error)
 	return s.rules.ListRules(ctx)
 }
 
-func (s *Service) UpdateRule(ctx context.Context, rule domain.RecurringRule) error {
-	rule, err := s.normalizeRule(ctx, rule)
+func (s *Service) UpdateRule(ctx context.Context, rule domain.RecurringRule, today string) error {
+	todayDate, err := time.Parse("2006-01-02", today)
 	if err != nil {
+		return ErrInvalidDate
+	}
+	existing, err := s.rules.GetRule(ctx, rule.ID)
+	if err != nil {
+		return err
+	}
+
+	// The stored date names the Pending Charge. It is owned by the scheduling
+	// operation below, not trusted from a submitted edit form.
+	rule.NextChargeDate = existing.NextChargeDate
+	rule, err = s.normalizeRule(ctx, rule)
+	if err != nil {
+		return err
+	}
+
+	scheduleChanged := rule.IntervalUnit != existing.IntervalUnit ||
+		rule.IntervalCount != existing.IntervalCount || rule.AnchorDay != existing.AnchorDay
+	switch {
+	case rule.Enabled && !existing.Enabled:
+		rule.NextChargeDate, err = firstChargeOnOrAfter(rule, existing.NextChargeDate, todayDate)
+	case rule.Enabled && scheduleChanged:
+		rule.NextChargeDate, err = recomputePendingCharge(*existing, rule, todayDate)
+	}
+	if err != nil {
+		return err
+	}
+	if rule.Enabled && rule.EndDate != "" && rule.NextChargeDate > rule.EndDate {
+		rule.Enabled = false
+	}
+
+	if rule.Enabled {
+		charge := chargeFor(rule)
+		rewritten, err := s.expenses.RewritePendingCharge(ctx, rule.ID, today, charge)
+		if err != nil {
+			return err
+		}
+		if !rewritten {
+			if _, err := s.expenses.MintCharge(ctx, charge); err != nil {
+				return err
+			}
+		}
+	} else if err := s.expenses.DeletePendingCharge(ctx, rule.ID, today); err != nil {
 		return err
 	}
 	return s.rules.UpdateRule(ctx, rule)
 }
 
-// DeleteRule removes the rule itself. The transactional delete that also unlinks
-// its past expenses and clears its Pending Charge is a later concern.
-func (s *Service) DeleteRule(ctx context.Context, id int64) error {
-	return s.rules.DeleteRule(ctx, id)
+// SetRuleEnabled applies the same ownership path as an edit. Disabling removes
+// the Pending Charge; re-enabling advances the stopped schedule to its first
+// occurrence on or after today before minting one charge, so the paused stretch
+// is never mistaken for an outage that needs Catch-up.
+func (s *Service) SetRuleEnabled(ctx context.Context, id int64, enabled bool, today string) error {
+	rule, err := s.rules.GetRule(ctx, id)
+	if err != nil {
+		return err
+	}
+	rule.Enabled = enabled
+	return s.UpdateRule(ctx, *rule, today)
+}
+
+func (s *Service) DeleteRule(ctx context.Context, id int64, today string) error {
+	if _, err := time.Parse("2006-01-02", today); err != nil {
+		return ErrInvalidDate
+	}
+	return s.rules.DeleteRule(ctx, id, today)
+}
+
+// firstChargeOnOrAfter advances a stopped schedule without minting anything it
+// stepped over. The stale stored occurrence is the phase anchor for week/day
+// schedules and the stored Anchor Day is reapplied for month schedules.
+func firstChargeOnOrAfter(rule domain.RecurringRule, from string, today time.Time) (string, error) {
+	date, err := time.Parse("2006-01-02", from)
+	if err != nil {
+		return "", ErrInvalidDate
+	}
+	if err := validateSchedule(rule); err != nil {
+		return "", err
+	}
+	if rule.IntervalUnit == domain.IntervalMonths {
+		date = time.Date(date.Year(), date.Month(), clampDay(date.Year(), int(date.Month()), rule.AnchorDay), 0, 0, 0, 0, time.UTC)
+	}
+	for date.Before(today) {
+		date = nextCharge(date, rule)
+	}
+	return date.Format("2006-01-02"), nil
+}
+
+// recomputePendingCharge treats the occurrence before the existing Pending
+// Charge as the fixed point, then applies the edited schedule from there. This
+// lets interval, count and Anchor Day edits move the future without ever
+// deriving a new occurrence from a clamped day or touching history.
+func recomputePendingCharge(existing, edited domain.RecurringRule, today time.Time) (string, error) {
+	pending, err := time.Parse("2006-01-02", existing.NextChargeDate)
+	if err != nil {
+		return "", ErrInvalidDate
+	}
+	previous := previousCharge(pending, existing)
+	candidate := nextCharge(previous, edited)
+	for candidate.Before(today) {
+		candidate = nextCharge(candidate, edited)
+	}
+	return candidate.Format("2006-01-02"), nil
+}
+
+func previousCharge(from time.Time, rule domain.RecurringRule) time.Time {
+	return stepCharge(from, rule, -1)
 }
 
 // --- Generation ---

@@ -68,6 +68,33 @@ func (r *mockRepo) MintCharge(ctx context.Context, e domain.Expense) (bool, erro
 	return true, nil
 }
 
+func (r *mockRepo) RewritePendingCharge(_ context.Context, ruleID int64, today string, e domain.Expense) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.expenses {
+		if r.expenses[i].RecurringRuleID == ruleID && r.expenses[i].Date > today {
+			e.ID = r.expenses[i].ID
+			e.CreatedAt = r.expenses[i].CreatedAt
+			r.expenses[i] = e
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *mockRepo) DeletePendingCharge(_ context.Context, ruleID int64, today string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := r.expenses[:0]
+	for _, e := range r.expenses {
+		if e.RecurringRuleID != ruleID || e.Date <= today {
+			kept = append(kept, e)
+		}
+	}
+	r.expenses = kept
+	return nil
+}
+
 func (r *mockRepo) ListExpenses(_ context.Context, limit int) ([]domain.Expense, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -204,6 +231,8 @@ func (r *mockRepo) UpdateExpense(_ context.Context, e domain.Expense) error {
 	defer r.mu.Unlock()
 	for i := range r.expenses {
 		if r.expenses[i].ID == e.ID {
+			e.RecurringRuleID = r.expenses[i].RecurringRuleID
+			e.CreatedAt = r.expenses[i].CreatedAt
 			r.expenses[i] = e
 			return nil
 		}
@@ -496,13 +525,24 @@ func (r *mockRepo) UpdateRule(_ context.Context, rule domain.RecurringRule) erro
 	return nil
 }
 
-func (r *mockRepo) DeleteRule(_ context.Context, id int64) error {
+func (r *mockRepo) DeleteRule(_ context.Context, id int64, today string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.rules[id]; !ok {
 		return fmt.Errorf("no recurring rule with id %d", id)
 	}
 	delete(r.rules, id)
+	kept := r.expenses[:0]
+	for _, e := range r.expenses {
+		if e.RecurringRuleID == id && e.Date > today {
+			continue
+		}
+		if e.RecurringRuleID == id {
+			e.RecurringRuleID = 0
+		}
+		kept = append(kept, e)
+	}
+	r.expenses = kept
 	return nil
 }
 

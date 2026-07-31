@@ -778,6 +778,14 @@ func (s *expenseRepoStub) MintCharge(ctx context.Context, e domain.Expense) (boo
 	return false, nil
 }
 
+func (s *expenseRepoStub) RewritePendingCharge(ctx context.Context, ruleID int64, today string, e domain.Expense) (bool, error) {
+	return false, nil
+}
+
+func (s *expenseRepoStub) DeletePendingCharge(ctx context.Context, ruleID int64, today string) error {
+	return nil
+}
+
 func (s *expenseRepoStub) ListExpenses(ctx context.Context, limit int) ([]domain.Expense, error) {
 	return nil, nil
 }

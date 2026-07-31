@@ -59,7 +59,7 @@ func (s *ruleStore) UpdateRule(_ context.Context, r domain.RecurringRule) error 
 	return nil
 }
 
-func (s *ruleStore) DeleteRule(_ context.Context, id int64) error {
+func (s *ruleStore) DeleteRule(_ context.Context, id int64, _ string) error {
 	if _, ok := s.rules[id]; !ok {
 		return fmt.Errorf("no recurring rule with id %d", id)
 	}
@@ -249,6 +249,7 @@ func newRuleService(t *testing.T, prefs domain.Preferences) (*Service, *ruleStor
 	store := newRuleStore()
 	svc := New(repository.Repos{
 		Rules:       store,
+		Expenses:    &expenseRepoStub{},
 		Preferences: &prefsStub{prefs: prefs},
 	}, &mockRateClient{})
 	return svc, store
@@ -441,7 +442,7 @@ func TestUpdateRule_ValidatesAndPersists(t *testing.T) {
 	edited.ID = id
 	edited.Amount = 19.99
 	edited.Name = "Netflix Premium"
-	if err := svc.UpdateRule(ctx, edited); err != nil {
+	if err := svc.UpdateRule(ctx, edited, "2026-07-31"); err != nil {
 		t.Fatalf("UpdateRule: %v", err)
 	}
 	got, _ := svc.GetRule(ctx, id)
@@ -451,7 +452,7 @@ func TestUpdateRule_ValidatesAndPersists(t *testing.T) {
 
 	invalid := edited
 	invalid.Amount = 0
-	if err := svc.UpdateRule(ctx, invalid); !errors.Is(err, ErrInvalidAmount) {
+	if err := svc.UpdateRule(ctx, invalid, "2026-07-31"); !errors.Is(err, ErrInvalidAmount) {
 		t.Errorf("UpdateRule with a zero amount: got %v, want %v", err, ErrInvalidAmount)
 	}
 	got, _ = svc.GetRule(ctx, id)
@@ -468,7 +469,7 @@ func TestDeleteRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRule: %v", err)
 	}
-	if err := svc.DeleteRule(ctx, id); err != nil {
+	if err := svc.DeleteRule(ctx, id, "2026-07-31"); err != nil {
 		t.Fatalf("DeleteRule: %v", err)
 	}
 	if _, err := svc.GetRule(ctx, id); err == nil {
@@ -506,6 +507,51 @@ func (s *chargeStore) MintCharge(_ context.Context, e domain.Expense) (bool, err
 	s.nextID++
 	s.expenses = append(s.expenses, e)
 	return true, nil
+}
+
+func (s *chargeStore) RewritePendingCharge(_ context.Context, ruleID int64, today string, e domain.Expense) (bool, error) {
+	for i := range s.expenses {
+		if s.expenses[i].RecurringRuleID == ruleID && s.expenses[i].Date > today {
+			e.ID = s.expenses[i].ID
+			e.CreatedAt = s.expenses[i].CreatedAt
+			s.expenses[i] = e
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *chargeStore) DeletePendingCharge(_ context.Context, ruleID int64, today string) error {
+	kept := s.expenses[:0]
+	for _, e := range s.expenses {
+		if e.RecurringRuleID != ruleID || e.Date <= today {
+			kept = append(kept, e)
+		}
+	}
+	s.expenses = kept
+	return nil
+}
+
+func (s *chargeStore) GetExpense(_ context.Context, id int64) (*domain.Expense, error) {
+	for _, e := range s.expenses {
+		if e.ID == id {
+			copy := e
+			return &copy, nil
+		}
+	}
+	return nil, fmt.Errorf("no expense with id %d", id)
+}
+
+func (s *chargeStore) UpdateExpense(_ context.Context, e domain.Expense) error {
+	for i := range s.expenses {
+		if s.expenses[i].ID == e.ID {
+			e.RecurringRuleID = s.expenses[i].RecurringRuleID
+			e.CreatedAt = s.expenses[i].CreatedAt
+			s.expenses[i] = e
+			return nil
+		}
+	}
+	return fmt.Errorf("no expense with id %d", e.ID)
 }
 
 func (s *chargeStore) ListExpensesInRange(_ context.Context, start, end string) ([]domain.Expense, error) {
@@ -686,6 +732,206 @@ func TestGenerateCharges_CatchesUpOnEveryMissedCharge(t *testing.T) {
 	if minted != 0 {
 		t.Errorf("re-running catch-up minted %d charges, want 0", minted)
 	}
+}
+
+// TestSetRuleEnabled_ReenableSkipsTheDisabledStretch is the deliberate pair to
+// TestGenerateCharges_CatchesUpOnEveryMissedCharge above. The same Rule is
+// stranded in January and the same April date is supplied, but this time the
+// gap was a deliberate pause: re-enabling creates only the first anchored
+// occurrence on or after today, never the four Expenses catch-up rightly mints
+// after an outage.
+func TestSetRuleEnabled_ReenableSkipsTheDisabledStretch(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	r := generatingRule()
+	r.NextChargeDate = "2026-01-15"
+	r.Enabled = false
+	id, err := svc.CreateRule(ctx, r)
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+
+	if err := svc.SetRuleEnabled(ctx, id, true, "2026-04-20"); err != nil {
+		t.Fatalf("SetRuleEnabled: %v", err)
+	}
+	assertDates(t, svc, "2026-05-15")
+
+	rule, err := svc.GetRule(ctx, id)
+	if err != nil {
+		t.Fatalf("GetRule: %v", err)
+	}
+	if !rule.Enabled || rule.NextChargeDate != "2026-05-15" {
+		t.Errorf("re-enabled rule = %+v, want enabled with its next charge on 2026-05-15", *rule)
+	}
+
+	minted, err := svc.GenerateCharges(ctx, "2026-04-20")
+	if err != nil {
+		t.Fatalf("GenerateCharges after re-enable: %v", err)
+	}
+	if minted != 0 {
+		t.Errorf("generation after re-enable minted %d charges, want 0", minted)
+	}
+	assertDates(t, svc, "2026-05-15")
+}
+
+func TestUpdateRule_RewritesPendingChargeAndLeavesPastExpensesUntouched(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	r := generatingRule()
+	r.NextChargeDate = "2026-01-15"
+	id, err := svc.CreateRule(ctx, r)
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	if _, err := svc.GenerateCharges(ctx, "2026-04-15"); err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+
+	// Generation on an occurrence date leaves that due-today Expense in the
+	// ledger and advances the Rule to its true future Pending Charge.
+	pastBefore, err := svc.ExpensesInRange(ctx, "0001-01-01", "2026-04-15")
+	if err != nil {
+		t.Fatalf("ExpensesInRange(past): %v", err)
+	}
+	pendingBefore, err := svc.ExpensesInRange(ctx, "2026-04-16", "9999-12-31")
+	if err != nil || len(pendingBefore) != 1 {
+		t.Fatalf("ExpensesInRange(pending): got %+v, err %v", pendingBefore, err)
+	}
+
+	edited, err := svc.GetRule(ctx, id)
+	if err != nil {
+		t.Fatalf("GetRule: %v", err)
+	}
+	edited.Name = "Netflix Premium"
+	edited.Amount = 22.50
+	edited.Currency = "EUR"
+	edited.Category = "entertainment"
+	edited.PaidByID = 42
+	edited.IntervalCount = 2
+	edited.AnchorDay = 20
+	if err := svc.UpdateRule(ctx, *edited, "2026-04-15"); err != nil {
+		t.Fatalf("UpdateRule: %v", err)
+	}
+
+	pastAfter, err := svc.ExpensesInRange(ctx, "0001-01-01", "2026-04-15")
+	if err != nil {
+		t.Fatalf("ExpensesInRange(past after edit): %v", err)
+	}
+	if !reflect.DeepEqual(pastAfter, pastBefore) {
+		t.Errorf("past Expenses changed:\n before: %+v\n  after: %+v", pastBefore, pastAfter)
+	}
+
+	pendingAfter, err := svc.ExpensesInRange(ctx, "2026-04-16", "9999-12-31")
+	if err != nil || len(pendingAfter) != 1 {
+		t.Fatalf("ExpensesInRange(pending after edit): got %+v, err %v", pendingAfter, err)
+	}
+	want := domain.Expense{
+		ID: pendingBefore[0].ID, Amount: 22.50, Category: "entertainment",
+		Description: "Netflix Premium", Date: "2026-06-20", Currency: "EUR",
+		PaidByID: 42, RecurringRuleID: id,
+	}
+	if pendingAfter[0] != want {
+		t.Errorf("rewritten Pending Charge = %+v, want %+v", pendingAfter[0], want)
+	}
+	rule, _ := svc.GetRule(ctx, id)
+	if rule.NextChargeDate != want.Date {
+		t.Errorf("rule next charge date = %s, want rewritten Pending Charge date %s", rule.NextChargeDate, want.Date)
+	}
+}
+
+func TestUpdateRule_EndDateBeforePendingChargeDisablesRule(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	id, err := svc.CreateRule(ctx, generatingRule())
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	if _, err := svc.GenerateCharges(ctx, "2026-07-31"); err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	edited, _ := svc.GetRule(ctx, id)
+	edited.EndDate = "2026-08-01"
+	if err := svc.UpdateRule(ctx, *edited, "2026-07-31"); err != nil {
+		t.Fatalf("UpdateRule: %v", err)
+	}
+	rule, _ := svc.GetRule(ctx, id)
+	if rule.Enabled {
+		t.Error("Rule stayed enabled when its Pending Charge fell after the edited end date")
+	}
+	assertDates(t, svc)
+}
+
+func TestSetRuleEnabled_DisableRemovesOnlyThePendingCharge(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	r := generatingRule()
+	r.NextChargeDate = "2026-01-15"
+	id, err := svc.CreateRule(ctx, r)
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	if _, err := svc.GenerateCharges(ctx, "2026-04-15"); err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	pastBefore, _ := svc.ExpensesInRange(ctx, "0001-01-01", "2026-04-15")
+
+	if err := svc.SetRuleEnabled(ctx, id, false, "2026-04-15"); err != nil {
+		t.Fatalf("SetRuleEnabled: %v", err)
+	}
+	if got := chargeDates(t, svc); !reflect.DeepEqual(got, []string{"2026-01-15", "2026-02-15", "2026-03-15", "2026-04-15"}) {
+		t.Fatalf("charges after disable = %v, want only the Rule's history", got)
+	}
+	pastAfter, _ := svc.ExpensesInRange(ctx, "0001-01-01", "2026-04-15")
+	if !reflect.DeepEqual(pastAfter, pastBefore) {
+		t.Errorf("disabling changed past Expenses:\n before: %+v\n  after: %+v", pastBefore, pastAfter)
+	}
+	rule, _ := svc.GetRule(ctx, id)
+	if rule.Enabled {
+		t.Error("disabled rule remained enabled")
+	}
+}
+
+func TestUpdateExpense_MovingPendingChargeKeepsRuleOwnershipInSync(t *testing.T) {
+	svc, _, _ := newGeneratingService(t)
+	ctx := context.Background()
+
+	id, err := svc.CreateRule(ctx, generatingRule())
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	if _, err := svc.GenerateCharges(ctx, "2026-08-15"); err != nil {
+		t.Fatalf("GenerateCharges: %v", err)
+	}
+	pending, err := svc.ExpensesInRange(ctx, "2026-08-16", "9999-12-31")
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("ExpensesInRange(pending): got %+v, err %v", pending, err)
+	}
+	e := pending[0]
+	if err := svc.UpdateExpense(ctx, e.ID, e.Amount, e.Category, e.Description, "2026-09-20", e.Currency, e.PaidByID); err != nil {
+		t.Fatalf("UpdateExpense: %v", err)
+	}
+	rule, _ := svc.GetRule(ctx, id)
+	if rule.NextChargeDate != "2026-09-20" {
+		t.Fatalf("Rule still points at %s after its Pending Charge moved, want 2026-09-20", rule.NextChargeDate)
+	}
+
+	minted, err := svc.GenerateCharges(ctx, "2026-08-15")
+	if err != nil {
+		t.Fatalf("GenerateCharges after edit: %v", err)
+	}
+	if minted != 0 {
+		t.Errorf("generation minted %d duplicate charges after the Pending Charge moved, want 0", minted)
+	}
+	assertDates(t, svc, "2026-08-15", "2026-09-20")
+
+	if err := svc.SetRuleEnabled(ctx, id, false, "2026-08-15"); err != nil {
+		t.Fatalf("SetRuleEnabled: %v", err)
+	}
+	assertDates(t, svc, "2026-08-15")
 }
 
 // TestGenerateCharges_CatchUpKeepsTheAnchor is the anchor canary on the path

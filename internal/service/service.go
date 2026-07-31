@@ -141,6 +141,30 @@ func (s *Service) UpdateExpense(ctx context.Context, id int64, amount float64, c
 	if err != nil {
 		return err
 	}
+	existing, err := s.expenses.GetExpense(ctx, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return fmt.Errorf("expense %d was not found", id)
+	}
+
+	// A Pending Charge is still an ordinary editable Expense. If that edit moves
+	// its date, move the Rule's pointer with it so generation, Rule edits,
+	// disabling and deletion continue to identify the same row. Historical
+	// charges retain the rule reference too, so only the Expense currently named
+	// by NextChargeDate is allowed to move the schedule.
+	var movedRule *domain.RecurringRule
+	if existing.RecurringRuleID != 0 && existing.Date != date {
+		rule, err := s.rules.GetRule(ctx, existing.RecurringRuleID)
+		if err != nil {
+			return err
+		}
+		if rule.NextChargeDate == existing.Date {
+			rule.NextChargeDate = date
+			movedRule = rule
+		}
+	}
 	e := domain.Expense{
 		ID:          id,
 		Amount:      amount,
@@ -150,7 +174,13 @@ func (s *Service) UpdateExpense(ctx context.Context, id int64, amount float64, c
 		Currency:    currency,
 		PaidByID:    paidByID,
 	}
-	return s.expenses.UpdateExpense(ctx, e)
+	if err := s.expenses.UpdateExpense(ctx, e); err != nil {
+		return err
+	}
+	if movedRule != nil {
+		return s.rules.UpdateRule(ctx, *movedRule)
+	}
+	return nil
 }
 
 func (s *Service) DeleteExpense(ctx context.Context, id int64) error {

@@ -88,6 +88,38 @@ func (r *sqliteRepo) MintCharge(ctx context.Context, e domain.Expense) (bool, er
 	return n > 0, nil
 }
 
+// pendingChargePredicate is the storage definition of Rule-owned future: a
+// linked Expense strictly after today. Keeping the boundary in one place makes
+// due-today history impossible to rewrite or delete by accident.
+const pendingChargePredicate = `recurring_rule_id = ? AND date > ?`
+
+func (r *sqliteRepo) RewritePendingCharge(ctx context.Context, ruleID int64, today string, e domain.Expense) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE expenses SET
+			amount = ?, category = ?, description = ?, date = ?, currency = ?, paid_by = ?
+		WHERE id = (
+			SELECT id FROM expenses
+			WHERE `+pendingChargePredicate+`
+			ORDER BY date ASC
+			LIMIT 1
+		)`,
+		e.Amount, e.Category, e.Description, e.Date, e.Currency, nullableID(e.PaidByID), ruleID, today,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+func (r *sqliteRepo) DeletePendingCharge(ctx context.Context, ruleID int64, today string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM expenses WHERE `+pendingChargePredicate, ruleID, today)
+	return err
+}
+
 func (r *sqliteRepo) ListExpenses(ctx context.Context, limit int) ([]domain.Expense, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+expenseColumns+`
@@ -590,11 +622,24 @@ func (r *sqliteRepo) UpdateRule(ctx context.Context, rule domain.RecurringRule) 
 	return nil
 }
 
-// DeleteRule drops the rule alone. Clearing the reference on the expenses it
-// already minted, and removing its Pending Charge, is a separate transactional
-// concern the ownership work owns.
-func (r *sqliteRepo) DeleteRule(ctx context.Context, id int64) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM recurring_rules WHERE id = ?`, id)
+// DeleteRule follows user deletion's transaction shape: the Rule's future is
+// removed, its history is detached into ordinary Expenses, and the Rule itself
+// is dropped as one indivisible operation.
+func (r *sqliteRepo) DeleteRule(ctx context.Context, id int64, today string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM expenses WHERE `+pendingChargePredicate, id, today); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE expenses SET recurring_rule_id = NULL WHERE recurring_rule_id = ?`, id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM recurring_rules WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -605,7 +650,7 @@ func (r *sqliteRepo) DeleteRule(ctx context.Context, id int64) error {
 	if n == 0 {
 		return fmt.Errorf("no recurring rule with id %d", id)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // --- Exchange Rates ---
