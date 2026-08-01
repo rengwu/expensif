@@ -23,26 +23,8 @@
     </div>
     <div>
       <label class="block font-medium text-gray-700 mb-1">Currency</label>
-      <select id="currency-select" name="currency" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-        {{$sel := .Currency}}{{if .Expense}}{{$sel = .Expense.Currency}}{{end}}
-        <option value="MYR" {{if eq $sel "MYR"}}selected{{end}}>Malaysian Ringgit (RM)</option>
-        <option value="USD" {{if eq $sel "USD"}}selected{{end}}>US Dollar ($)</option>
-        <option value="JPY" {{if eq $sel "JPY"}}selected{{end}}>Japanese Yen (¥)</option>
-        <option value="CNY" {{if eq $sel "CNY"}}selected{{end}}>Chinese Yuan (¥)</option>
-        <option value="THB" {{if eq $sel "THB"}}selected{{end}}>Thai Baht (฿)</option>
-        <option value="EUR" {{if eq $sel "EUR"}}selected{{end}}>Euro (€)</option>
-        <option value="GBP" {{if eq $sel "GBP"}}selected{{end}}>British Pound (£)</option>
-        <option value="SGD" {{if eq $sel "SGD"}}selected{{end}}>Singapore Dollar (S$)</option>
-        <option value="KRW" {{if eq $sel "KRW"}}selected{{end}}>South Korean Won (₩)</option>
-        <option value="AUD" {{if eq $sel "AUD"}}selected{{end}}>Australian Dollar (A$)</option>
-        <option value="CAD" {{if eq $sel "CAD"}}selected{{end}}>Canadian Dollar (C$)</option>
-        <option value="INR" {{if eq $sel "INR"}}selected{{end}}>Indian Rupee (₹)</option>
-        <option value="VND" {{if eq $sel "VND"}}selected{{end}}>Vietnamese Dong (₫)</option>
-        <option value="PHP" {{if eq $sel "PHP"}}selected{{end}}>Philippine Peso (₱)</option>
-        <option value="IDR" {{if eq $sel "IDR"}}selected{{end}}>Indonesian Rupiah (Rp)</option>
-        <option value="HKD" {{if eq $sel "HKD"}}selected{{end}}>Hong Kong Dollar (HK$)</option>
-        <option value="TWD" {{if eq $sel "TWD"}}selected{{end}}>New Taiwan Dollar (NT$)</option>
-      </select>
+      {{$sel := .Currency}}{{if .Expense}}{{$sel = .Expense.Currency}}{{end}}
+      {{template "currency-select" dict "name" "currency" "id" "currency-select" "selected" $sel}}
     </div>
     <div>
       <label class="block font-medium text-gray-700 mb-1">Date</label>

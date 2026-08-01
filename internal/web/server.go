@@ -12,6 +12,20 @@ type Server struct {
 }
 
 func NewServer(api *APIHandler, html *HTMLHandler, port string) *Server {
+	if port == "" {
+		port = "8080"
+	}
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: RecoverPanic(RequestLog(routes(api, html))),
+	}
+	return &Server{srv: srv}
+}
+
+// routes is the app's routing table, apart from the server that listens on it,
+// so a test can drive real requests — path values and method matching included —
+// through the same mux production runs.
+func routes(api *APIHandler, html *HTMLHandler) http.Handler {
 	mux := http.NewServeMux()
 
 	// Static assets (Vite build output)
@@ -33,6 +47,14 @@ func NewServer(api *APIHandler, html *HTMLHandler, port string) *Server {
 	mux.HandleFunc("POST /expenses/edit/{id}", html.HandleUpdate)
 	mux.HandleFunc("POST /expenses/delete/{id}", html.HandleDelete)
 
+	mux.HandleFunc("GET /recurring", html.HandleRecurring)
+	mux.HandleFunc("GET /recurring/new", html.HandleRecurringNew)
+	mux.HandleFunc("POST /recurring/new", html.HandleRecurringCreate)
+	mux.HandleFunc("GET /recurring/edit/{id}", html.HandleRecurringEdit)
+	mux.HandleFunc("POST /recurring/edit/{id}", html.HandleRecurringUpdate)
+	mux.HandleFunc("POST /recurring/toggle/{id}", html.HandleRecurringToggle)
+	mux.HandleFunc("POST /recurring/delete/{id}", html.HandleRecurringDelete)
+
 	mux.HandleFunc("GET /users", html.HandleUsers)
 	mux.HandleFunc("GET /users/new", html.HandleUserNew)
 	mux.HandleFunc("POST /users/new", html.HandleUserCreate)
@@ -50,16 +72,7 @@ func NewServer(api *APIHandler, html *HTMLHandler, port string) *Server {
 	mux.HandleFunc("GET /api/expenses/descriptions", api.HandleDescriptions)
 	mux.HandleFunc("GET /api/summary", api.HandleSummary)
 
-	if port == "" {
-		port = "8080"
-	}
-	handler := RecoverPanic(RequestLog(mux))
-	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: handler,
-	}
-
-	return &Server{srv: srv}
+	return mux
 }
 
 func (s *Server) Run() error {

@@ -1,0 +1,140 @@
+{{define "title"}}{{if .IsEdit}}Edit Recurring Rule{{else}}New Recurring Rule{{end}}{{end}}
+{{define "content"}}
+{{$pageTitle := "New Recurring Rule"}}{{if .IsEdit}}{{$pageTitle = "Edit Recurring Rule"}}{{end}}
+{{template "mobile-pad-start"}}
+{{template "page-title" dict "title" $pageTitle}}
+{{template "mobile-pad-end"}}
+
+<form method="POST" action="{{if .IsEdit}}/recurring/edit/{{.Rule.ID}}{{else}}/recurring/new{{end}}">
+  <div class="bg-white rounded-none sm:rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 space-y-4">
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Name</label>
+      <input type="text" name="name" value="{{.Rule.Name}}" placeholder="e.g. Netflix" required autofocus
+        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <p class="text-xs text-gray-400 mt-1">Becomes the description of every expense this rule creates.</p>
+    </div>
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Amount</label>
+      <input type="text" inputmode="decimal" name="amount" value="{{if gt .Rule.Amount 0.0}}{{formatAmount .Rule.Amount .Rule.Currency}}{{end}}" placeholder="0.00" required
+        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+    </div>
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Currency</label>
+      {{template "currency-select" dict "name" "currency" "selected" (default .Currency .Rule.Currency)}}
+    </div>
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Category</label>
+      <input type="text" name="category" value="{{.Rule.Category}}" placeholder="e.g. subscriptions" required
+        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+    </div>
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Paid By</label>
+      {{if .Users}}
+      <select name="paid_by_id" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+        <option value="0">-- None --</option>
+        {{$paidByID := .Rule.PaidByID}}
+        {{range .Users}}
+        <option value="{{.ID}}" {{if eq $paidByID .ID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+      {{else}}
+      <div class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-400 text-sm">
+        No users yet. <a href="/users" class="text-blue-600 hover:underline">Add one in User Management</a>.
+      </div>
+      {{end}}
+    </div>
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Charges</label>
+      <div class="flex gap-3">
+        <input type="number" name="interval_count" value="{{.Rule.IntervalCount}}" min="1" step="1" required
+          class="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <select name="interval_unit" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          {{$unit := .Rule.IntervalUnit}}
+          <option value="months" {{if eq $unit "months"}}selected{{end}}>months</option>
+          <option value="weeks" {{if eq $unit "weeks"}}selected{{end}}>weeks</option>
+          <option value="days" {{if eq $unit "days"}}selected{{end}}>days</option>
+        </select>
+      </div>
+      <p class="text-xs text-gray-400 mt-1">How often it charges — every 1 month, every 2 weeks, every 10 days.</p>
+    </div>
+
+    {{if .IsEdit}}
+    {{/* The Anchor Day is what monthly dates are computed from, and it is
+         deliberately carried by the form rather than re-derived: a rule anchored
+         on the 31st whose charge clamped to Feb 28 must go back to Mar 31, and an
+         anchor silently taken from the clamped date would walk it backwards
+         forever. A week/day rule keeps its stored value in a hidden field, so
+         switching such a rule to months still has one. */}}
+    {{if eq .Rule.IntervalUnit "months"}}
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Charges on day</label>
+      <input type="number" name="anchor_day" value="{{.Rule.AnchorDay}}" min="1" max="31" step="1" required
+        class="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <p class="text-xs text-gray-400 mt-1">Day of the month. A day past the end of a short month charges on its last day.</p>
+    </div>
+    {{else}}
+    <input type="hidden" name="anchor_day" value="{{.Rule.AnchorDay}}" />
+    {{end}}
+    {{else}}
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">First charge</label>
+      <input type="date" name="next_charge_date" value="{{.Rule.NextChargeDate}}" required
+        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <p class="text-xs text-gray-400 mt-1">A monthly rule then charges on this day every month.</p>
+    </div>
+    {{end}}
+
+    <div>
+      <label class="block font-medium text-gray-700 mb-1">Ends on <span class="text-gray-400 font-normal">(optional)</span></label>
+      <input type="date" name="end_date" value="{{.Rule.EndDate}}"
+        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <p class="text-xs text-gray-400 mt-1">Leave blank for an open-ended rule. It switches itself off once its next charge would fall past this date.</p>
+    </div>
+
+    <div>
+      <label class="flex items-center gap-2 font-medium text-gray-700">
+        <input type="checkbox" name="enabled" value="on" {{if .Rule.Enabled}}checked{{end}}
+          class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+        Enabled
+      </label>
+      <p class="text-xs text-gray-400 mt-1">
+        {{if .IsEdit}}
+        Pausing removes the charge waiting ahead; resuming picks the schedule up from today rather than backfilling the pause.
+        {{else}}
+        A new rule's first charge appears in the ledger within the hour.
+        {{end}}
+      </p>
+    </div>
+
+    <div class="flex gap-3 pt-2">
+      {{template "button" dict "variant" "ghost" "href" "/recurring" "text" "Cancel" "class" "flex-1 text-center"}}
+      {{$btnText := "Create Rule"}}{{if .IsEdit}}{{$btnText = "Save Changes"}}{{end}}
+      {{template "button" dict "variant" "primary" "type" "submit" "text" $btnText "class" "flex-1"}}
+    </div>
+  </div>
+</form>
+
+{{if .IsEdit}}
+<div class="mt-10 pt-6 border-t border-gray-200">
+  <div class="text-xs font-medium uppercase tracking-wide text-gray-400 mb-2">Danger zone</div>
+  <div class="flex items-center justify-between gap-4">
+    <p class="text-sm text-gray-500">
+      Deleting a rule removes the charge waiting ahead. Expenses it already created are kept.
+    </p>
+    {{/* A sibling of the edit form, never nested inside it: a <form> within a
+         <form> is invalid HTML, and the page above is already one. */}}
+    <form method="POST" action="/recurring/delete/{{.Rule.ID}}" onsubmit="return confirm('Delete recurring rule &quot;{{.Rule.Name}}&quot;?')">
+      <button type="submit" class="bg-red-50 text-red-600 hover:bg-red-100 rounded px-3 py-1.5 text-sm font-medium shrink-0">
+        Delete rule
+      </button>
+    </form>
+  </div>
+</div>
+{{end}}
+{{end}}

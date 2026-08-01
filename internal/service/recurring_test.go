@@ -1096,3 +1096,137 @@ func TestCreateRule_FallsBackToUSDWithoutPreferences(t *testing.T) {
 		t.Errorf("currency = %q, want USD", got)
 	}
 }
+
+// --- The Monthly Equivalent ---
+
+// monthlyEquivalentService wires a service whose only dependency the figure
+// touches is the rate store, seeded (or not) by the caller.
+func monthlyEquivalentService(t *testing.T, rates map[string]float64) *Service {
+	t.Helper()
+	repo := &mockRateRepo{}
+	if rates != nil {
+		if err := repo.SaveRates(context.Background(), "USD", "2026-08-01", rates); err != nil {
+			t.Fatalf("seed rates: %v", err)
+		}
+	}
+	return New(repository.Repos{Rates: repo}, &mockRateClient{})
+}
+
+// scheduled builds an enabled rule on the given interval, in the given currency.
+func scheduled(amount float64, unit domain.IntervalUnit, count int, currency string) domain.RecurringRule {
+	return domain.RecurringRule{
+		Name: "rule", Category: "subscriptions", Amount: amount, Currency: currency,
+		IntervalUnit: unit, IntervalCount: count, AnchorDay: 15,
+		NextChargeDate: "2026-08-15", Enabled: true,
+	}
+}
+
+// closeTo compares money at a tenth of a cent — the figure is approximate by
+// construction, so an exact float comparison would assert the arithmetic's
+// rounding rather than its result.
+func closeTo(got, want float64) bool {
+	diff := got - want
+	return diff < 0.001 && diff > -0.001
+}
+
+// TestMonthlyEquivalent_NormalizesEveryInterval is the normalization contract:
+// months divide, weeks and days scale by how many of them a mean month holds.
+// Every rule is already in the target currency, so no rate is consulted.
+func TestMonthlyEquivalent_NormalizesEveryInterval(t *testing.T) {
+	tests := []struct {
+		name string
+		rule domain.RecurringRule
+		want float64
+	}{
+		{"every month", scheduled(100, domain.IntervalMonths, 1, "USD"), 100},
+		{"every three months", scheduled(300, domain.IntervalMonths, 3, "USD"), 100},
+		{"every week", scheduled(10, domain.IntervalWeeks, 1, "USD"), 10 * 365.25 / 7 / 12},
+		{"every two weeks", scheduled(50, domain.IntervalWeeks, 2, "USD"), 50 * 365.25 / 7 / 12 / 2},
+		{"every day", scheduled(2, domain.IntervalDays, 1, "USD"), 2 * 365.25 / 12},
+		{"every ten days", scheduled(20, domain.IntervalDays, 10, "USD"), 20 * 365.25 / 12 / 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := monthlyEquivalentService(t, nil)
+			got, ok := svc.MonthlyEquivalent(context.Background(), []domain.RecurringRule{tt.rule}, "USD")
+			if !ok {
+				t.Fatal("figure hid itself with nothing to convert")
+			}
+			if !closeTo(got, tt.want) {
+				t.Errorf("monthly equivalent = %.4f, want %.4f", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMonthlyEquivalent_SumsMixedIntervalsAndCurrencies is the page's headline
+// case: four rules on three intervals in two currencies add up to one figure in
+// the Preferred Currency, and the paused one is not in it.
+func TestMonthlyEquivalent_SumsMixedIntervalsAndCurrencies(t *testing.T) {
+	svc := monthlyEquivalentService(t, map[string]float64{"USD": 1, "EUR": 0.5})
+
+	disabled := scheduled(999, domain.IntervalMonths, 1, "USD")
+	disabled.Enabled = false
+	rules := []domain.RecurringRule{
+		scheduled(120, domain.IntervalMonths, 3, "USD"), // 40.00 a month
+		// EUR 50 a fortnight: 50 * 365.25/7/12/2 EUR a month, then into USD at
+		// 0.5 EUR per USD.
+		scheduled(50, domain.IntervalWeeks, 2, "EUR"),
+		disabled,
+	}
+
+	got, ok := svc.MonthlyEquivalent(context.Background(), rules, "USD")
+	if !ok {
+		t.Fatal("figure hid itself with rates available for every currency")
+	}
+	want := 40 + (50*365.25/7/12/2)/0.5
+	if !closeTo(got, want) {
+		t.Errorf("monthly equivalent = %.4f, want %.4f (the disabled rule must be excluded)", got, want)
+	}
+}
+
+// TestMonthlyEquivalent_HidesRatherThanShowingAPartialTotal pins the deliberate
+// choice: one unconvertible rule hides the whole figure rather than quietly
+// dropping it, because a partial total is a wrong number with nothing on screen
+// to say so.
+func TestMonthlyEquivalent_HidesRatherThanShowingAPartialTotal(t *testing.T) {
+	svc := monthlyEquivalentService(t, nil) // no rates at all
+	rules := []domain.RecurringRule{
+		scheduled(100, domain.IntervalMonths, 1, "USD"),
+		scheduled(30, domain.IntervalMonths, 1, "EUR"),
+	}
+
+	if got, ok := svc.MonthlyEquivalent(context.Background(), rules, "USD"); ok {
+		t.Errorf("figure showed %.2f with a rule it could not convert; it must hide", got)
+	}
+}
+
+// TestMonthlyEquivalent_PreferredCurrencyRulesCountWithoutRates is the other
+// half of that decision: rates being missing is only fatal to a figure that
+// needed them.
+func TestMonthlyEquivalent_PreferredCurrencyRulesCountWithoutRates(t *testing.T) {
+	svc := monthlyEquivalentService(t, nil)
+	rules := []domain.RecurringRule{
+		scheduled(100, domain.IntervalMonths, 1, "USD"),
+		scheduled(30, domain.IntervalMonths, 1, "USD"),
+	}
+
+	got, ok := svc.MonthlyEquivalent(context.Background(), rules, "USD")
+	if !ok {
+		t.Fatal("figure hid itself although no rule needed converting")
+	}
+	if !closeTo(got, 130) {
+		t.Errorf("monthly equivalent = %.2f, want 130", got)
+	}
+}
+
+// TestMonthlyEquivalent_NoEnabledRules is the empty page: zero is a truthful
+// figure, not a hidden one.
+func TestMonthlyEquivalent_NoEnabledRules(t *testing.T) {
+	svc := monthlyEquivalentService(t, nil)
+	got, ok := svc.MonthlyEquivalent(context.Background(), nil, "USD")
+	if !ok || got != 0 {
+		t.Errorf("MonthlyEquivalent(nil) = %.2f, %v; want 0, true", got, ok)
+	}
+}

@@ -12,7 +12,7 @@
 <body class="bg-gray-50 text-gray-800 text-sm">
 <div class="max-w-3xl mx-auto px-0 sm:px-4">
   <nav class="sticky top-0 z-40 bg-gray-50 flex items-center gap-4 sm:gap-6 py-3 px-3 sm:px-0 border-b border-gray-200">
-    <div data-island="mobile-nav" class="sm:hidden" data-props='{"links":[{"label":"Daily","href":"/","active":{{if eq .Active "daily"}}true{{else}}false{{end}}},{"label":"Calendar","href":"/calendar","active":{{if eq .Active "calendar"}}true{{else}}false{{end}}}],"secondary":[{"label":"Export","href":"/export","active":{{if eq .Active "export"}}true{{else}}false{{end}}},{"label":"Preferences","href":"/preferences","active":{{if eq .Active "prefs"}}true{{else}}false{{end}}}]}'></div>
+    <div data-island="mobile-nav" class="sm:hidden" data-props='{"links":[{"label":"Daily","href":"/","active":{{if eq .Active "daily"}}true{{else}}false{{end}}},{"label":"Calendar","href":"/calendar","active":{{if eq .Active "calendar"}}true{{else}}false{{end}}}],"secondary":[{"label":"Recurring","href":"/recurring","active":{{if eq .Active "recurring"}}true{{else}}false{{end}}},{"label":"Export","href":"/export","active":{{if eq .Active "export"}}true{{else}}false{{end}}},{"label":"Preferences","href":"/preferences","active":{{if eq .Active "prefs"}}true{{else}}false{{end}}}]}'></div>
     <a href="/" class="hidden sm:block font-semibold {{if eq .Active "daily"}}text-gray-900{{else}}text-blue-600 hover:text-blue-800{{end}}">Daily</a>
     <a href="/calendar" class="hidden sm:block font-semibold {{if eq .Active "calendar"}}text-gray-900{{else}}text-blue-600 hover:text-blue-800{{end}}">Calendar</a>
     {{$plusIcon := `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>`}}
@@ -24,6 +24,7 @@
         </svg>
       </button>
       <div class="hidden absolute right-0 top-full mt-2 w-40 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50" id="nav-dropdown">
+        <a href="/recurring" class="block px-4 py-2 text-sm font-semibold {{if eq .Active "recurring"}}text-gray-900 bg-gray-50{{else}}text-gray-700 hover:bg-gray-50{{end}}">Recurring</a>
         <a href="/export" class="block px-4 py-2 text-sm font-semibold {{if eq .Active "export"}}text-gray-900 bg-gray-50{{else}}text-gray-700 hover:bg-gray-50{{end}}">Export</a>
         <a href="/preferences" class="block px-4 py-2 text-sm font-semibold {{if eq .Active "prefs"}}text-gray-900 bg-gray-50{{else}}text-gray-700 hover:bg-gray-50{{end}}">Preferences</a>
       </div>

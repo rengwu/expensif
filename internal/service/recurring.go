@@ -282,6 +282,80 @@ func previousCharge(from time.Time, rule domain.RecurringRule) time.Time {
 	return stepCharge(from, rule, -1)
 }
 
+// --- The Monthly Equivalent ---
+
+// daysPerMonth is the mean Gregorian month — 365.25 days a year over twelve
+// months. Week and day intervals have no whole-number relationship to a month,
+// which is exactly why the Monthly Equivalent is presented as approximate
+// rather than exact.
+const daysPerMonth = 365.25 / 12
+
+// monthlyAmount normalizes one rule's charge to what it costs per month: every
+// n months divides by n, every n weeks and every n days scale by how many of
+// them the mean month holds. The rule's schedule is validated by the caller, so
+// the interval count here is at least 1.
+func monthlyAmount(rule domain.RecurringRule) float64 {
+	n := float64(rule.IntervalCount)
+	switch rule.IntervalUnit {
+	case domain.IntervalWeeks:
+		return rule.Amount * daysPerMonth / 7 / n
+	case domain.IntervalDays:
+		return rule.Amount * daysPerMonth / n
+	default: // domain.IntervalMonths
+		return rule.Amount / n
+	}
+}
+
+// MonthlyEquivalent answers "what do these rules cost me a month?": every
+// enabled rule normalized to a per-month amount, converted into target through
+// the same rate path the views use, and summed. Disabled rules are excluded —
+// the figure is what is actually being paid.
+//
+// ok is false when the figure cannot be trusted, and the page hides it rather
+// than showing a wrong number. A rule already in the target currency needs no
+// conversion and still counts when rates are missing, so an account billed
+// entirely in its Preferred Currency always gets a figure. But a set where even
+// one rule cannot be converted hides *entirely* rather than showing a partial
+// total: silently dropping a rule understates committed spending with nothing
+// on screen to say so, which is the wrong number this is meant to prevent.
+// (ConvertExpensesTotal skips unconvertible expenses instead — it totals rows
+// the reader can see and count, where this is a single opaque figure.)
+//
+// The rules are supplied by the caller rather than fetched, so the figure is
+// provably about the same rules the page lists.
+func (s *Service) MonthlyEquivalent(ctx context.Context, rules []domain.RecurringRule, target string) (float64, bool) {
+	var rates map[string]float64
+	fetched := false
+
+	var total float64
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		// A schedule the arithmetic cannot read — only reachable by writing to
+		// the database outside the service — makes the whole sum untrustworthy.
+		if err := validateSchedule(rule); err != nil {
+			return 0, false
+		}
+		monthly := monthlyAmount(rule)
+		if rule.Currency == target {
+			total += monthly
+			continue
+		}
+		// Rates are read once, and only when a rule actually needs them.
+		if !fetched {
+			rates, _, _ = s.GetRatesForConversion(ctx)
+			fetched = true
+		}
+		converted, err := s.ConvertWithRates(monthly, rule.Currency, target, rates)
+		if err != nil {
+			return 0, false
+		}
+		total += converted
+	}
+	return total, true
+}
+
 // --- Generation ---
 
 // GenerateCharges mints the expenses every enabled rule owes as of `today`, and

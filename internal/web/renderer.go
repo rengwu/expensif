@@ -199,6 +199,10 @@ func NewRenderer(templatesDir string, dev bool, manifest assets.Manifest) (*Rend
 		"user_form": parsePage(filepath.Join(templatesDir, "user_form.html")),
 		"calendar":  parsePage(filepath.Join(templatesDir, "calendar.html")),
 		"export":    parsePage(filepath.Join(templatesDir, "export.html")),
+		// The Recurring page and its rule form, following the users/user_form
+		// shape: a list page plus one form serving both new and edit.
+		"recurring":      parsePage(filepath.Join(templatesDir, "recurring.html")),
+		"recurring_form": parsePage(filepath.Join(templatesDir, "recurring_form.html")),
 	}
 
 	fragments := map[string]*template.Template{
