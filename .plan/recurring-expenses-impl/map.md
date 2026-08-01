@@ -121,6 +121,21 @@ database whose clock you can reason about. The wayfinder linter for this map:
   over the same `filterWhere`; `TotalExpenses` is untouched, so `/api/summary` stays unbounded and
   out of scope.
   — [06](./tickets/06-bounding-the-list-view.md)
+- **The docs describe what shipped, and the effort earns no ADR.** `CONTEXT.md` carries
+  **Recurring Rule**, **Pending Charge**, **Anchor Day**, **Catch-up** and **Monthly Equivalent**,
+  placed with the view terms, plus a *Recurring Rule vs. Expense* cross-context note — and the
+  **List View** entry corrected, since it no longer shows "all expenses". The ADR question was
+  assessed and answered **no**: no island was added, and the goroutine (the rate fetcher's shape,
+  copied) and the `web.Notice` seam (50 lines, alternatives documented in place) are both far from
+  the bar ADR 0001 sets. ADR 0001 gains a note instead, recording the Recurring page as the clearest
+  measure of where the hydration bar sits and naming what deliberately went undocumented there.
+  `AGENTS.md`'s inventory was already accurate; its Layout line now says `internal/web` also holds
+  the generation goroutine. The sweep found one ticket-era comment and no dead code. **Nothing
+  contradicts the spec** — but three doubts from tickets 04–06 are still a human's to rule on, and
+  the answer gathers them: the Flash fires for every mint rather than only for Catch-up, a new Rule
+  has no Pending Charge for up to an hour, and the List View's empty state can mislead when every
+  Expense is future-dated.
+  — [07](./tickets/07-docs-and-architecture.md)
 
 ## Not yet specified
 
