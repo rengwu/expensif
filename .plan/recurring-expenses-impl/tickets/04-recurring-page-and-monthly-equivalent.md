@@ -1,6 +1,8 @@
 ---
 type: task
 blocked_by: [03]
+claimed_by: s5e91e5a8c71b
+claimed_at: 2026-08-01T18:12:36Z
 ---
 
 # The Recurring page and the Monthly Equivalent
