@@ -83,6 +83,20 @@ database whose clock you can reason about. The wayfinder linter for this map:
   the Rule. Ticket 04 must supply `today` in the configured Timezone to edit/toggle/delete; a
   charge dated exactly today is ledger history and must not be rewritten or removed.
   — [03](./tickets/03-what-a-rule-owns.md)
+- **The effort has a face, and the figure hides rather than half-tells.** `GET /recurring`
+  lists every Rule soonest-charge-first with paused ones last and *no* next-charge date (their
+  stored date is a stopped clock), and its forms drive create, edit, pause/resume and delete —
+  each passing `today` in the Preferences Timezone. No Island, no TypeScript. The edit form
+  carries the **Anchor Day** deliberately: `normalizeRule` would otherwise re-derive it from a
+  clamped charge date and walk a 31st Rule backwards. `Service.MonthlyEquivalent(ctx, rules,
+  target)` normalizes each enabled Rule (months divide; weeks and days scale by the mean
+  30.44-day month), converts through the existing rate path and sums — and **a set with even
+  one unconvertible Rule hides entirely rather than showing a partial total**, while a Rule
+  already in the Preferred Currency counts with no rates at all. Three things later tickets
+  inherit: success flashes cross the redirect as a whitelisted `?flash=` code, the currency
+  `<select>` is now the shared `partials/currency-select.html`, and `NewServer`'s mux is a
+  `routes()` function the handler tests drive real requests through.
+  — [04](./tickets/04-recurring-page-and-monthly-equivalent.md)
 - **Generation is live, and a goroutine can raise a Flash.** `web.Generator` runs
   `GenerateCharges` once at startup and then **hourly**, on the context that already stops the
   rate refresher, dating charges in the Preferences Timezone read fresh every pass. It is the
