@@ -1,6 +1,8 @@
 ---
 type: task
 blocked_by: [04, 05, 06]
+claimed_by: sd4c2f970daae
+claimed_at: 2026-08-01T19:27:48Z
 ---
 
 # Docs and architecture catch up with what shipped
