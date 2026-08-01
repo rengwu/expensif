@@ -66,6 +66,48 @@ func TestCountMatchingAgreesWithExpensesMatching(t *testing.T) {
 	}
 }
 
+// TestSumMatchingAgreesWithExpensesMatching is CountMatching's assertion for the
+// total: a figure bounded by a filter covers exactly the rows that filter lists.
+// The empty filter matters most — SUM over no rows is NULL in SQLite, and a total
+// that failed to scan it would be an error where zero is the answer.
+func TestSumMatchingAgreesWithExpensesMatching(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+	seed := []domain.Expense{
+		{Amount: 1.25, Category: "food", Date: "2026-01-01", Currency: "USD"},
+		{Amount: 2.50, Category: "travel", Date: "2026-01-02", Currency: "USD"},
+		{Amount: 4, Category: "food", Date: "2026-02-01", Currency: "USD"},
+	}
+	for _, e := range seed {
+		if _, err := repo.CreateExpense(ctx, e); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	filters := []domain.ExpenseFilter{
+		{Start: "0001-01-01", End: "9999-12-31"},
+		{Start: "0001-01-01", End: "2026-01-02"}, // the List View's shape: everything up to a day
+		{Start: "0001-01-01", End: "2026-01-31", Category: "food"},
+		{Start: "2030-01-01", End: "2030-12-31"}, // matches nothing: SUM is NULL
+	}
+	for _, f := range filters {
+		total, err := repo.SumMatching(ctx, f)
+		if err != nil {
+			t.Fatalf("SumMatching(%+v): %v", f, err)
+		}
+		rows, err := repo.ExpensesMatching(ctx, f)
+		if err != nil {
+			t.Fatalf("ExpensesMatching(%+v): %v", f, err)
+		}
+		var want float64
+		for _, e := range rows {
+			want += e.Amount
+		}
+		if total != want {
+			t.Fatalf("filter %+v: sum %.2f != the rows' total %.2f", f, total, want)
+		}
+	}
+}
+
 // TestSampleMatchingIsAPrefix proves the sample is the genuine head of the
 // download: ordered identically, and truncated to the limit.
 func TestSampleMatchingIsAPrefix(t *testing.T) {

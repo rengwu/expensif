@@ -33,6 +33,12 @@ type ExpenseRepository interface {
 	// identically to ExpensesMatching — the genuine first rows of the download,
 	// for the preview sample.
 	SampleMatching(ctx context.Context, filter domain.ExpenseFilter, limit int) ([]domain.Expense, error)
+	// SumMatching adds up the raw amounts of the expenses matching the filter — a
+	// SUM(amount) sibling of CountMatching over the same filter→WHERE helper. The
+	// amounts are not converted, so it is only meaningful where a raw total already
+	// was; its purpose is to let a total be date-bounded by the same filter that
+	// bounds the rows it summarises.
+	SumMatching(ctx context.Context, filter domain.ExpenseFilter) (float64, error)
 	// DistinctCategories returns every category the account has ever used, sorted,
 	// for the Export page's category dropdown (category is free-text upstream).
 	DistinctCategories(ctx context.Context) ([]string, error)

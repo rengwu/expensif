@@ -23,6 +23,14 @@
     Currency conversion unavailable — rates will be fetched shortly.
   </div>
   {{end}}
+  {{/* The page ends at today: total, breakdown and rows all read the same
+       bounded set, so the figures can be added up from what is listed. Saying
+       so is what keeps a missing future row from looking like a lost expense. */}}
+  <div class="text-xs text-gray-400 mt-1">
+    Up to today — future-dated expenses stay on the
+    <a href="/" class="underline hover:text-gray-600">Daily view</a> until their
+    date arrives.
+  </div>
 </div>
 
 {{if .Expenses}} {{$meta := dict "currency" .Currency "currencySymbol"

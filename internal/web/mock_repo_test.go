@@ -183,6 +183,28 @@ func (r *mockRepo) CountMatching(_ context.Context, f domain.ExpenseFilter) (int
 	return n, nil
 }
 
+// SumMatching keeps its own copy of the predicate, like CountMatching: a total
+// that agreed with the listed rows only because it was handed the same slice
+// would prove nothing about the two paths agreeing in SQL.
+func (r *mockRepo) SumMatching(_ context.Context, f domain.ExpenseFilter) (float64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var total float64
+	for _, e := range r.expenses {
+		if e.Date < f.Start || e.Date > f.End {
+			continue
+		}
+		if f.Category != "" && e.Category != f.Category {
+			continue
+		}
+		if f.PayerID != 0 && e.PaidByID != f.PayerID {
+			continue
+		}
+		total += e.Amount
+	}
+	return total, nil
+}
+
 func (r *mockRepo) SampleMatching(ctx context.Context, f domain.ExpenseFilter, limit int) ([]domain.Expense, error) {
 	rows, err := r.ExpensesMatching(ctx, f)
 	if err != nil {

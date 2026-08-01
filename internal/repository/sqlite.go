@@ -227,6 +227,21 @@ func (r *sqliteRepo) CountMatching(ctx context.Context, f domain.ExpenseFilter) 
 	return n, err
 }
 
+// SumMatching sums the raw amounts matching the filter, sharing filterWhere with
+// ExpensesMatching so a bounded total covers exactly the expenses a bounded list
+// would show. No join is needed — the filter's predicates are all on e.
+func (r *sqliteRepo) SumMatching(ctx context.Context, f domain.ExpenseFilter) (float64, error) {
+	where, args := filterWhere(f)
+	var total sql.NullFloat64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT SUM(amount) FROM expenses e WHERE `+where, args...,
+	).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total.Float64, nil
+}
+
 // DistinctCategories returns every category the account has used, sorted, for the
 // Export page's dropdown. Distinct from ListCategories, which is a recency- and
 // frequency-ranked shortlist for the add form; here the export wants the full set.

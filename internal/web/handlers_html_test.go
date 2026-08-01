@@ -322,3 +322,116 @@ func TestHandleDelete_ReturnPath(t *testing.T) {
 		})
 	}
 }
+
+// --- The List View, bounded to today ---
+
+// listFixture wires the app's real router over an in-memory repository, with the
+// handler's clock frozen at now. withRates decides which of the summary card's
+// two branches renders: seeded rates give the converted total and the category
+// breakdown, none gives the unconverted fallback total — the page shows a total
+// either way, so both have to respect the bound.
+func listFixture(t *testing.T, tz string, now time.Time, withRates bool) (http.Handler, *mockRepo) {
+	t.Helper()
+	repo := newMockRepo()
+	repo.prefs = domain.Preferences{Currency: "USD", Timezone: tz}
+	if withRates {
+		if err := repo.SaveRates(t.Context(), "USD", "2026-08-01", map[string]float64{"USD": 1, "EUR": 0.9}); err != nil {
+			t.Fatalf("seed rates: %v", err)
+		}
+	}
+
+	svc := service.New(repository.Repos{
+		Expenses:    repo,
+		Users:       repo,
+		Preferences: repo,
+		Rates:       repo,
+		Rules:       repo,
+	}, &mockRateClient{})
+
+	renderer, err := NewRenderer("../../templates", false, nil)
+	if err != nil {
+		t.Fatalf("renderer init failed: %v", err)
+	}
+	h := NewHTMLHandler(svc, renderer)
+	h.now = func() time.Time { return now }
+	return routes(NewAPIHandler(svc), h), repo
+}
+
+// squashed collapses every run of whitespace to a single space, so an assertion
+// can name what the page says without knowing where the template wrapped it.
+func squashed(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// TestHandleList_ExcludesFutureDatedExpenses is the ticket's assertion: expenses
+// on both sides of today, and only the past ones reach the total, the category
+// breakdown and the rows. The future expense here is a Pending Charge — the case
+// that made this urgent, since every enabled rule keeps one permanently — but the
+// bound is a date, so a hand-entered future expense is excluded identically.
+func TestHandleList_ExcludesFutureDatedExpenses(t *testing.T) {
+	router, repo := listFixture(t, "UTC", time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC), true)
+	ctx := t.Context()
+	repo.CreateExpense(ctx, domain.Expense{Amount: 10, Category: "food", Description: "lunch", Date: "2026-07-01", Currency: "USD"})
+	// Today is spent money: the bound is inclusive, or the day you are living in
+	// would vanish from its own total.
+	repo.CreateExpense(ctx, domain.Expense{Amount: 5, Category: "transport", Description: "bus", Date: "2026-08-02", Currency: "USD"})
+	repo.CreateExpense(ctx, domain.Expense{
+		Amount: 100, Category: "subscriptions", Description: "Netflix",
+		Date: "2026-08-31", Currency: "USD", RecurringRuleID: 7,
+	})
+
+	page := squashed(getPage(t, router, "/expenses"))
+
+	if !strings.Contains(page, "Total: $15.00") {
+		t.Error("the total counts money that has not been spent yet")
+	}
+	// The breakdown is bounded by the same filter as the total, so it adds up to
+	// it — a category that appears only in the future must not appear at all.
+	if !strings.Contains(page, "food: $10.00") || !strings.Contains(page, "transport: $5.00") {
+		t.Error("the category breakdown lost a past expense")
+	}
+	if strings.Contains(page, "subscriptions") {
+		t.Error("a future-dated expense reached the category breakdown")
+	}
+	// Rows are bounded too: the rows are the evidence for the total, and one
+	// visible above a total that excludes it makes the page argue with itself.
+	if strings.Contains(page, "Netflix") {
+		t.Error("a future-dated expense is listed as a row it cannot be found in the total for")
+	}
+	if !strings.Contains(page, "lunch") || !strings.Contains(page, "bus") {
+		t.Error("a past expense is missing from the rows")
+	}
+}
+
+// TestHandleList_FallbackTotalIsBoundedToo covers the other branch of the summary
+// card. With no rates the page falls back to an unconverted total, and a bound
+// applied only to the converted path would go on overstating the headline on
+// exactly the days conversion is unavailable.
+func TestHandleList_FallbackTotalIsBoundedToo(t *testing.T) {
+	router, repo := listFixture(t, "UTC", time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC), false)
+	ctx := t.Context()
+	repo.CreateExpense(ctx, domain.Expense{Amount: 10, Category: "food", Description: "lunch", Date: "2026-07-01", Currency: "USD"})
+	repo.CreateExpense(ctx, domain.Expense{Amount: 100, Category: "subscriptions", Description: "Netflix", Date: "2026-08-31", Currency: "USD"})
+
+	page := squashed(getPage(t, router, "/expenses"))
+
+	if !strings.Contains(page, "Currency conversion unavailable") {
+		t.Fatal("expected the unconverted fallback branch to render")
+	}
+	if !strings.Contains(page, "Total: $10.00") {
+		t.Error("the fallback total counts money that has not been spent yet")
+	}
+}
+
+// TestHandleList_BoundIsTodayInThePreferencesTimezone pins the bound's timezone
+// the way the ledger's is pinned. At 2026-08-02T23:00Z it is already August 3 in
+// Auckland, so that day's expense is spent money; a List View that bounded on UTC
+// would drop it as future.
+func TestHandleList_BoundIsTodayInThePreferencesTimezone(t *testing.T) {
+	router, repo := listFixture(t, "Pacific/Auckland", time.Date(2026, 8, 2, 23, 0, 0, 0, time.UTC), true)
+	repo.CreateExpense(t.Context(), domain.Expense{Amount: 7, Category: "food", Description: "supper", Date: "2026-08-03", Currency: "USD"})
+
+	page := squashed(getPage(t, router, "/expenses"))
+
+	if !strings.Contains(page, "Total: $7.00") {
+		t.Error("today was named in UTC, not the Preferences timezone")
+	}
+}

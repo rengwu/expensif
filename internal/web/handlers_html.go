@@ -105,13 +105,26 @@ func (h *HTMLHandler) render(w http.ResponseWriter, name string, data PageData) 
 
 func (h *HTMLHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	expenses, err := h.svc.ListExpenses(ctx, 100)
+	data := h.basePageData(ctx, "list")
+
+	// The List View answers "what have I actually spent", so it ends at today —
+	// named in the Preferences timezone, like every other date in the app. A
+	// future-dated expense is money not yet spent: every enabled Recurring Rule
+	// keeps one Pending Charge ahead, and an unbounded total would overstate the
+	// headline by a full cycle of subscriptions, permanently.
+	//
+	// Rows are bounded by the same filter as the figures, not merely the figures.
+	// The rows are the evidence for the total; a row visible above a total that
+	// does not contain it makes the page argue with itself — and, ordered newest
+	// first, those rows would sit at the very top. Nothing is lost: future-dated
+	// expenses remain on the Ledger (above today, editable there), the Calendar
+	// and every Export.
+	spent := domain.ExpenseFilter{Start: "0001-01-01", End: data.Today}
+	expenses, err := h.svc.SampleMatching(ctx, spent, 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	data := h.basePageData(ctx, "list")
 
 	// Convert per-row and totals to preference currency
 	convertedTotal, rateDate, _ := h.svc.ConvertExpensesTotal(ctx, expenses, data.Currency)
@@ -139,7 +152,10 @@ func (h *HTMLHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 	}
 	data.Categories = categories
 
-	total, _ := h.svc.TotalExpenses(ctx)
+	// The unconverted fallback total, shown when rates are missing, reads the same
+	// bound — otherwise the headline would still count future money on exactly the
+	// days conversion is unavailable.
+	total, _ := h.svc.SumMatching(ctx, spent)
 	data.Total = total
 	data.Islands = append(data.Islands, "data-table")
 

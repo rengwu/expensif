@@ -111,8 +111,8 @@ func (s *Service) ExpensesInRange(ctx context.Context, start, end string) ([]dom
 }
 
 // ExpensesMatching returns the raw expenses matching the filter (newest first),
-// leaving conversion to the caller. It is the single filtering seam; the List
-// View is intentionally not wired to it yet.
+// leaving conversion to the caller. It is the single filtering seam — the Export
+// and the List View both narrow through it.
 func (s *Service) ExpensesMatching(ctx context.Context, f domain.ExpenseFilter) ([]domain.Expense, error) {
 	return s.expenses.ExpensesMatching(ctx, f)
 }
@@ -128,6 +128,14 @@ func (s *Service) CountMatching(ctx context.Context, f domain.ExpenseFilter) (in
 // preview sample — the genuine head of the download.
 func (s *Service) SampleMatching(ctx context.Context, f domain.ExpenseFilter, limit int) ([]domain.Expense, error) {
 	return s.expenses.SampleMatching(ctx, f, limit)
+}
+
+// SumMatching returns the raw, unconverted total of the expenses matching the
+// filter. It reads the same filtering seam as ExpensesMatching, so a caller that
+// lists through one filter and totals through the same one cannot show a total
+// that covers a different set of expenses than the rows beneath it.
+func (s *Service) SumMatching(ctx context.Context, f domain.ExpenseFilter) (float64, error) {
+	return s.expenses.SumMatching(ctx, f)
 }
 
 // DistinctCategories returns every category the account has used, for the Export

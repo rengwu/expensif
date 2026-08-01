@@ -818,6 +818,21 @@ func (s *expenseRepoStub) SampleMatching(ctx context.Context, f domain.ExpenseFi
 	return nil, nil
 }
 
+func (s *expenseRepoStub) SumMatching(ctx context.Context, f domain.ExpenseFilter) (float64, error) {
+	if s.matching == nil {
+		return 0, nil
+	}
+	rows, err := s.matching(f)
+	if err != nil {
+		return 0, err
+	}
+	var total float64
+	for _, e := range rows {
+		total += e.Amount
+	}
+	return total, nil
+}
+
 func (s *expenseRepoStub) DistinctCategories(ctx context.Context) ([]string, error) {
 	if s.categories != nil {
 		return s.categories()
