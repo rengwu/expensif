@@ -67,7 +67,7 @@ _Avoid_: scheduled, future section, forecast
 A monthly grid showing which days have expenses and how much was spent, using a heat map to encode magnitude.
 
 **List View**:
-A page showing all expenses in a single table with totals and conversion information.
+A page showing expenses in a single table with totals and conversion information, bounded to today: future-dated expenses (a Pending Charge among them) are excluded from the rows, the total and the category breakdown alike, so "total spent" means money actually spent. They remain visible on the Daily View until their date arrives.
 
 **Export**:
 Downloading the account's expenses as a CSV file, filtered by a date range plus an optional category and payer. Unlike the List View, whose filtering is client-side, Export filters on the server (the `ExpensesMatching` query, with a `CountMatching` sibling for the live count). One canonical US/ISO CSV: ten fixed columns, dot decimals, comma-separated, UTF-8 with a BOM.
@@ -76,6 +76,26 @@ _Avoid_: report, dump, backup, download (as a noun for the feature)
 **Export Preview**:
 The live row count and a raw sample of the first rows shown on the Export page as the filters change, so the size and contents are visible before committing to a download. The sample shows each expense's entered amount and currency, not the converted amount — conversion happens only in the downloaded file.
 _Avoid_: preview pane, dry run
+
+**Recurring Rule**:
+A thing that charges on a schedule — rent, a subscription, an installment — listed on the Recurring page with its name, amount, currency, category, optional payer, interval ("Every 2 weeks"), optional end date, and whether it is enabled. A Rule is not a passive reference row: it mints ordinary Expenses on its own dates, and the Rule's name *is* their Description, so there is no separate description field. Disabling a Rule keeps its configuration but stops its clock entirely.
+_Avoid_: subscription (not everything that recurs is one — rent and installments are Rules too), schedule, template
+
+**Pending Charge**:
+The one charge each enabled Rule keeps materialized ahead of today, so what is coming is visible in Upcoming and can be corrected before it happens. It is an ordinary future-dated Expense linked to its Rule — **not** a distinct type and not a state: nothing in the system asks whether an Expense is pending, there is no approval step, and when its date passes it simply becomes history while the next one is minted behind it. It can be edited or deleted like any other Expense.
+_Avoid_: pending transaction, scheduled expense, draft, provisional (each implies a pending/confirmed state machine that deliberately does not exist)
+
+**Anchor Day**:
+The day of the month a monthly Rule aims for, stored separately from its next charge date and never re-derived from it. Each occurrence is min(anchor day, days in that month), so a Rule anchored on the 31st runs Jan 31 → Feb 28 → **Mar 31** → Apr 30: dates are always recomputed from the anchor, never accumulated onto the previous — possibly clamped — date. This is the single most important invariant in recurring expenses, because the failure it prevents is silent and slow.
+_Avoid_: due day, billing day, day of month (when the distinction from the clamped charge date is what matters)
+
+**Catch-up**:
+Minting the charges a Rule owed while the app was not running — each on its own true date, in order — which is what the generation run at startup does. It covers time the *app* was absent and never a stretch a human deliberately paused: disabling a Rule stops its clock, and re-enabling resumes from today with nothing backfilled. A generation run reports how many expenses it added on the next page rendered — the ones it backfilled and the newly materialized Pending Charge alike — so expenses never appear silently.
+_Avoid_: replay, sync, reconciliation (comparing expected charges against what a bank actually billed, which Expensif does not do)
+
+**Monthly Equivalent**:
+The single figure at the top of the Recurring page: every enabled Rule normalized to what it costs per month, converted into the Preferred Currency and summed. It is presented as approximate (`≈ $257.41 / month`) because week- and day-based intervals genuinely do not divide into a month — they are averaged over the mean 30.44-day one. Disabled Rules are excluded, and when any Rule cannot be converted the figure hides entirely rather than showing a partial total.
+_Avoid_: monthly total, monthly spend, budget
 
 **Category Suggestion**:
 A recently used category offered as a quick-select pill in the add/edit form.
@@ -100,3 +120,4 @@ _Avoid_: widget, component (when the specific partial-hydration pattern matters)
 - **Date vs. Time**: Expensif stores only a calendar date (`YYYY-MM-DD`). The timezone is a display concern, not part of the stored domain fact.
 - **Amount vs. Converted Amount**: The amount recorded on an expense is immutable relative to the expense's own currency. The converted amount is a view-model value derived from the exchange rate at display time.
 - **User vs. Payer**: A user is a person in the system; a payer is the role that person plays for a specific expense.
+- **Recurring Rule vs. Expense**: A Rule states what it *expects* to charge; the Expenses it mints are the record of what happened. A Rule owns only the future — its Pending Charge — and can never rewrite or delete an Expense whose date has passed, so deleting a Rule keeps the expenses it already created (they survive as ordinary unlinked ones).

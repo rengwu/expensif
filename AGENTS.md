@@ -19,7 +19,7 @@ There is no `test` script in `ui/package.json`; vitest is installed and invoked 
 ## Layout
 
 - `cmd/server/` — entrypoint.
-- `internal/domain/` — core types. `internal/service/` — business logic. `internal/repository/` — SQL. `internal/web/` — HTTP handlers and templates. `internal/rate/` — exchange rates. `internal/db/`, `internal/assets/`.
+- `internal/domain/` — core types. `internal/service/` — business logic. `internal/repository/` — SQL. `internal/web/` — HTTP handlers and templates, plus the background goroutine that generates recurring charges. `internal/rate/` — exchange rates. `internal/db/`, `internal/assets/`.
 - `ui/src/` — React islands, built by Vite into `/static/` (generated, gitignored).
 - `templates/` — Go HTML templates that mount the islands.
 

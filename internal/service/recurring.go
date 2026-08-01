@@ -104,7 +104,7 @@ func validateSchedule(rule domain.RecurringRule) error {
 // deliberately *not* defaulted — it is optional on a rule, so an unset payer
 // stays unset rather than inheriting the Preferences one behind the caller's
 // back; the add form pre-selects the default payer in its handler, and the
-// Recurring form is expected to do the same.
+// Recurring form does the same in HandleRecurringNew.
 func (s *Service) normalizeRule(ctx context.Context, rule domain.RecurringRule) (domain.RecurringRule, error) {
 	if rule.Amount <= 0 {
 		return rule, ErrInvalidAmount
