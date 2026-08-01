@@ -110,6 +110,17 @@ database whose clock you can reason about. The wayfinder linter for this map:
   created on the Recurring page has no Pending Charge until the next tick (≤1h), which ticket 04
   must live with rather than generating from a handler.
   — [05](./tickets/05-live-generation-goroutine-and-flash.md)
+- **The List View ends at today, and ends there once.** `HandleList` builds one
+  `ExpenseFilter{Start: "0001-01-01", End: data.Today}` — today in the Preferences Timezone,
+  inclusive — and reads the rows, the converted total, the Category breakdown and the new
+  `SumMatching` fallback total all through it, so total and breakdown cannot disagree. **Rows are
+  bounded too**: the rows are the evidence for the total, and newest-first they would put every
+  enabled Rule's uncounted Pending Charge at the top of the page; the Ledger, Calendar and Export
+  still show them. One muted line in the summary card says the page stops at today — a sentence,
+  not the spent/upcoming split the grilling ruled out. `SumMatching` is `CountMatching`'s sibling
+  over the same `filterWhere`; `TotalExpenses` is untouched, so `/api/summary` stays unbounded and
+  out of scope.
+  — [06](./tickets/06-bounding-the-list-view.md)
 
 ## Not yet specified
 
