@@ -1,6 +1,8 @@
 ---
 type: task
 blocked_by: []
+claimed_by: s72bcbbe89d41
+claimed_at: 2026-08-01T19:13:57Z
 ---
 
 # Bounding the List View to today
